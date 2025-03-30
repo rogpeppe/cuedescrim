@@ -1,4 +1,4 @@
-package main
+package cuediscrim
 
 import (
 	"bytes"
@@ -17,7 +17,19 @@ type DecisionNode interface {
 	Possible() intSet
 	// Check returns the chosen arms for the given value.
 	Check(v cue.Value) intSet
-	Write(w *indentWriter)
+	write(w *indentWriter)
+}
+
+func NodeString(n DecisionNode) string {
+	if n == nil {
+		return "<nil>"
+	}
+	var buf strings.Builder
+	w := &indentWriter{
+		w: &buf,
+	}
+	n.write(w)
+	return buf.String()
 }
 
 // AllNode holds the result of checking all its component nodes.
@@ -44,7 +56,7 @@ type LeafNode struct {
 	Arms intSet
 }
 
-func (l *LeafNode) Write(w *indentWriter) {
+func (l *LeafNode) write(w *indentWriter) {
 	w.Printf("choose(%v)", setString(l.Arms))
 }
 
@@ -87,13 +99,13 @@ func lookupPath(v cue.Value, path string) cue.Value {
 	return v.LookupPath(cue.MakePath(sels...))
 }
 
-func (k *KindSwitchNode) Write(w *indentWriter) {
+func (k *KindSwitchNode) write(w *indentWriter) {
 	w.Printf("switch kind(%v) {", k.Path)
 	for _, kind := range slices.Sorted(maps.Keys(k.Branches)) {
 		node := k.Branches[kind]
 		w.Printf("case %v:", kind)
 		w.Indent()
-		node.Write(w)
+		node.write(w)
 		w.Unindent()
 
 	}
@@ -138,27 +150,27 @@ func (n *FieldPresenceNode) Check(v cue.Value) intSet {
 	return nil
 }
 
-func (f *FieldPresenceNode) Write(w *indentWriter) {
+func (f *FieldPresenceNode) write(w *indentWriter) {
 	switch {
 	case !isError(f.Present) && !isError(f.NotPresent):
 		w.Printf("if present(%v) {", f.Path)
 		w.Indent()
-		f.Present.Write(w)
+		f.Present.write(w)
 		w.Unindent()
 		w.Printf("} else {")
 		w.Indent()
-		f.NotPresent.Write(w)
+		f.NotPresent.write(w)
 		w.Unindent()
 	case !isError(f.Present):
 		w.Printf("if present(%v) {", f.Path)
 		w.Indent()
-		f.Present.Write(w)
+		f.Present.write(w)
 		w.Unindent()
 		w.Printf("}")
 	default:
 		w.Printf("if !present(%v) {", f.Path)
 		w.Indent()
-		f.NotPresent.Write(w)
+		f.NotPresent.write(w)
 		w.Unindent()
 		w.Printf("}")
 	}
@@ -186,18 +198,18 @@ func (n *ValueSwitchNode) Check(v cue.Value) intSet {
 	return nil
 }
 
-func (n *ValueSwitchNode) Write(w *indentWriter) {
+func (n *ValueSwitchNode) write(w *indentWriter) {
 	w.Printf("switch %s {", n.Path)
 	for _, val := range slices.Sorted(maps.Keys(n.Branches)) {
 		node := n.Branches[val]
 		w.Printf("case %v:", val)
 		w.Indent()
-		node.Write(w)
+		node.write(w)
 		w.Unindent()
 	}
 	w.Printf("default:")
 	w.Indent()
-	n.Default.Write(w)
+	n.Default.write(w)
 	w.Unindent()
 	w.Printf("}")
 }
@@ -216,7 +228,7 @@ func (ErrorNode) Check(v cue.Value) intSet {
 	return nil
 }
 
-func (ErrorNode) Write(w *indentWriter) {
+func (ErrorNode) write(w *indentWriter) {
 	w.Printf("error")
 }
 
@@ -229,6 +241,9 @@ type indentWriter struct {
 // Write implements [io.Writer]. All lines written
 // will be indented by the current indent level.
 func (w *indentWriter) Write(buf []byte) (int, error) {
+	if w == nil {
+		return len(buf), nil
+	}
 	totalWritten := 0
 	for line := range bytes.SplitAfterSeq(buf, []byte("\n")) {
 		if len(line) == 0 {
@@ -258,17 +273,26 @@ func (w *indentWriter) Write(buf []byte) (int, error) {
 
 // Indent increments the current indent level.
 func (w *indentWriter) Indent() {
+	if w == nil {
+		return
+	}
 	w.indent++
 }
 
 // Unindent decrements the current indent level.
 func (w *indentWriter) Unindent() {
+	if w == nil {
+		return
+	}
 	w.indent--
 }
 
 // Printf is eqivalent to w.Write([]byte(fmt.Sprintf(f, a...))
 // but it always ensures that there's a final newline.
 func (w *indentWriter) Printf(f string, a ...any) {
+	if w == nil {
+		return
+	}
 	fmt.Fprintf(w, f, a...)
 	if !strings.HasSuffix(f, "\n") {
 		fmt.Fprintf(w, "\n")

@@ -1,6 +1,7 @@
-package main
+package cuediscrim
 
 import (
+	"fmt"
 	"iter"
 	"maps"
 	"os"
@@ -8,15 +9,45 @@ import (
 	"cuelang.org/go/cue"
 )
 
-var logger = &indentWriter{
-	w: os.Stderr,
+var logger *indentWriter
+
+func init() {
+	if false {
+		logger = &indentWriter{
+			w: os.Stderr,
+		}
+	}
 }
 
-// BuildDecisionTree takes a slice of arms (each representing one disjunct, with an index)
-// and tries to build a DecisionNode that discriminates among them.
-// If we cannot discriminate any further, we produce a LeafNode containing all arm indexes.
-func BuildDecisionTree(arms []cue.Value, selected intSet) (_n DecisionNode) {
-	logger.Printf("BuildDecisionTree %v {", setString(selected))
+// Discriminate returns a decision tree that can be used
+// to decide which arm of a disjunction should be chosen.
+// If v is not a disjunction, it returns a decision node that
+// just selects v itself.
+func Discriminate(v cue.Value) DecisionNode {
+	op, args := v.Expr()
+	switch op {
+	case cue.OrOp:
+	case cue.CallOp:
+		if fmt.Sprint(args[0]) != "matchN" {
+			break
+		}
+		if args[2].Kind() != cue.ListKind {
+			break
+		}
+		var arms []cue.Value
+		if err := args[2].Decode(&arms); err != nil {
+			panic(err)
+		}
+		args = arms
+	}
+	if args == nil {
+		args = []cue.Value{v}
+	}
+	return discriminate(args, intSetN(len(args)))
+}
+
+func discriminate(arms []cue.Value, selected intSet) (_n DecisionNode) {
+	logger.Printf("discriminate %v {", setString(selected))
 	logger.Indent()
 	defer func() {
 		logger.Printf("} -> %T", _n)
@@ -88,7 +119,7 @@ func buildDecisionFromDescriminators(path string, values []cue.Value, selected i
 			switch {
 			case k == cue.StructKind && len(group) > 1:
 				// We need to disambiguate a struct.
-				branch = BuildDecisionTree(values, group)
+				branch = discriminate(values, group)
 			case group.equal(selected):
 				// We've got nothing more to base a decision on,
 				// so terminate.
@@ -96,7 +127,7 @@ func buildDecisionFromDescriminators(path string, values []cue.Value, selected i
 					Arms: selected,
 				}
 			default:
-				branch = BuildDecisionTree(values, group)
+				branch = discriminate(values, group)
 			}
 			n.Branches[k] = branch
 		}
@@ -120,7 +151,7 @@ func buildDecisionFromDescriminators(path string, values []cue.Value, selected i
 			}
 		} else {
 			logger.Printf("valSwitch %v", val)
-			branch = BuildDecisionTree(values, group)
+			branch = discriminate(values, group)
 		}
 		valSwitch.Branches[val] = branch
 	}
@@ -193,7 +224,7 @@ func buildStructDecisionTree(arms []cue.Value, selected intSet) DecisionNode {
 // Try some discrimination on kind first.
 //string, "foo", {...}
 
-// logger.Printf("BuildDecisionTree %v {", arms)
+// logger.Printf("discriminate %v {", arms)
 // defer logger.Printf("}")
 //
 //	if len(arms) == 0 {
@@ -221,7 +252,7 @@ func buildStructDecisionTree(arms []cue.Value, selected intSet) DecisionNode {
 //		// We have multiple kinds among the arms => top-level KindSwitch
 //		branches := make(map[cue.Kind]DecisionNode, len(kindGroups))
 //		for k, group := range kindGroups {
-//			branches[k] = BuildDecisionTree(group)
+//			branches[k] = discriminate(group)
 //		}
 //		return &KindSwitchNode{Branches: branches}
 //	}
@@ -400,4 +431,15 @@ func iterConcat[T any](iters ...iter.Seq[T]) iter.Seq[T] {
 			}
 		}
 	}
+}
+
+func intSetN(n int) intSet {
+	if n == 0 {
+		return nil
+	}
+	s := make(intSet)
+	for i := range n {
+		s[i] = true
+	}
+	return s
 }

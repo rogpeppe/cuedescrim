@@ -1,4 +1,4 @@
-package main
+package cuediscrim
 
 import (
 	"fmt"
@@ -111,17 +111,6 @@ func TestAllRequiredFields(t *testing.T) {
 			qt.Assert(t, qt.Equals(buf.String(), strings.TrimPrefix(test.want, "\n")))
 		})
 	}
-}
-
-func intSetN(n int) intSet {
-	if n == 0 {
-		return nil
-	}
-	s := make(intSet)
-	for i := range n {
-		s[i] = true
-	}
-	return s
 }
 
 func disjunctionArms(v cue.Value) []cue.Value {

@@ -1,10 +1,9 @@
-package main
+package cuediscrim
 
 import (
 	"strings"
 	"testing"
 
-	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
 	"github.com/go-quicktest/qt"
 )
@@ -177,19 +176,8 @@ func TestBuildDecisionTree(t *testing.T) {
 			val := ctx.CompileString(test.cue)
 			qt.Assert(t, qt.IsNil(val.Err()))
 
-			op, disjuncts := val.Expr()
-			if op != cue.OrOp {
-				disjuncts = []cue.Value{val}
-			}
-			selected := make(intSet)
-			for i := range len(disjuncts) {
-				selected[i] = true
-			}
-			tree := BuildDecisionTree(disjuncts, selected)
-
-			var buf strings.Builder
-			tree.Write(&indentWriter{w: &buf})
-			qt.Assert(t, qt.Equals(buf.String(), strings.TrimPrefix(test.want, "\n")))
+			tree := Discriminate(val)
+			qt.Assert(t, qt.Equals(NodeString(tree), strings.TrimPrefix(test.want, "\n")))
 		})
 	}
 }
