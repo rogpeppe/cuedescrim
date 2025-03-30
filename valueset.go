@@ -207,7 +207,7 @@ func (m0 set[T]) union(m1 set[T]) set[T] {
 	return m2
 }
 
-func (m0 set[T]) equal(m1 set[T]) bool {
+func (m0 set[T]) Equal(m1 set[T]) bool {
 	return maps.Equal(m0, m1)
 }
 

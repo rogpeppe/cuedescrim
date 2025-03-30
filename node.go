@@ -86,19 +86,6 @@ func (n *KindSwitchNode) Check(v cue.Value) intSet {
 	return nil
 }
 
-func lookupPath(v cue.Value, path string) cue.Value {
-	if path == "." || path == "" {
-		return v
-	}
-	// TODO this doesn't work when a field name contains a dot.
-	parts := strings.Split(path, ".")
-	sels := make([]cue.Selector, len(parts))
-	for i, part := range parts {
-		sels[i] = cue.Str(part)
-	}
-	return v.LookupPath(cue.MakePath(sels...))
-}
-
 func (k *KindSwitchNode) write(w *indentWriter) {
 	w.Printf("switch kind(%v) {", k.Path)
 	for _, kind := range slices.Sorted(maps.Keys(k.Branches)) {
@@ -112,68 +99,52 @@ func (k *KindSwitchNode) write(w *indentWriter) {
 	w.Printf("}")
 }
 
-var tabs = strings.Repeat("\t", 1000)
-
-func indentStr(n int) string {
-	return tabs[:n]
+// FieldAbsenceNode tests for the absence of a set of paths
+// and uses the resulting information to infer the selected arms.
+type FieldAbsenceNode struct {
+	// Branches maps paths to the set of arms selected
+	// if the field at that path is known not to exist.
+	Branches map[string]intSet
 }
 
-// FieldPresenceNode tests for the presence of a particular field (e.g. `a`).
-type FieldPresenceNode struct {
-	Path       string
-	Present    DecisionNode
-	NotPresent DecisionNode
-}
-
-func (n *FieldPresenceNode) Possible() intSet {
+func (n *FieldAbsenceNode) Possible() intSet {
 	var s intSet
-	if n.Present != nil {
-		s = s.union(n.Present.Possible())
-	}
-	if n.NotPresent != nil {
-		s = s.union(n.NotPresent.Possible())
+	for _, s1 := range n.Branches {
+		s = s.union(s1)
 	}
 	return s
 }
 
-func (n *FieldPresenceNode) Check(v cue.Value) intSet {
-	f := lookupPath(v, n.Path)
-	if f.Exists() {
-		if n.Present != nil {
-			return n.Present.Check(v)
+func (n *FieldAbsenceNode) Check(v cue.Value) intSet {
+	first := true
+	var s intSet
+	for path, group := range n.Branches {
+		if lookupPath(v, path).Exists() {
+			continue
 		}
-	} else {
-		if n.NotPresent != nil {
-			return n.NotPresent.Check(v)
+		if first {
+			s = group
+			first = false
+		} else {
+			s = s.intersect(group)
 		}
 	}
-	return nil
+	if first {
+		// No non-existence test failed. Could be anything.
+		return n.Possible()
+	}
+	return s
 }
 
-func (f *FieldPresenceNode) write(w *indentWriter) {
-	switch {
-	case !isError(f.Present) && !isError(f.NotPresent):
-		w.Printf("if present(%v) {", f.Path)
-		w.Indent()
-		f.Present.write(w)
-		w.Unindent()
-		w.Printf("} else {")
-		w.Indent()
-		f.NotPresent.write(w)
-		w.Unindent()
-	case !isError(f.Present):
-		w.Printf("if present(%v) {", f.Path)
-		w.Indent()
-		f.Present.write(w)
-		w.Unindent()
-		w.Printf("}")
-	default:
-		w.Printf("if !present(%v) {", f.Path)
-		w.Indent()
-		f.NotPresent.write(w)
-		w.Unindent()
-		w.Printf("}")
+func (n *FieldAbsenceNode) write(w *indentWriter) {
+	w.Printf("allOf {")
+	w.Indent()
+	for _, path := range slices.Sorted(maps.Keys(n.Branches)) {
+		group := n.Branches[path]
+		w.Printf("notPresent(%v) -> %s", path, setString(group))
 	}
+	w.Unindent()
+	w.Printf("}")
 }
 
 // ValueSwitchNode tests for specific enumerated (atomic) values in a field.
@@ -189,11 +160,13 @@ func (n *ValueSwitchNode) Possible() intSet {
 
 func (n *ValueSwitchNode) Check(v cue.Value) intSet {
 	f := lookupPath(v, n.Path)
-	if !f.Exists() || !isAtomKind(f.Kind()) {
-		return nil
+	if f.Exists() && isAtomKind(f.Kind()) {
+		if sub, ok := n.Branches[atomForValue(f)]; ok {
+			return sub.Check(v)
+		}
 	}
-	if sub, ok := n.Branches[atomForValue(f)]; ok {
-		return sub.Check(v)
+	if n.Default != nil {
+		return n.Default.Check(v)
 	}
 	return nil
 }
@@ -297,4 +270,17 @@ func (w *indentWriter) Printf(f string, a ...any) {
 	if !strings.HasSuffix(f, "\n") {
 		fmt.Fprintf(w, "\n")
 	}
+}
+
+func lookupPath(v cue.Value, path string) cue.Value {
+	if path == "." || path == "" {
+		return v
+	}
+	// TODO this doesn't work when a field name contains a dot.
+	parts := strings.Split(path, ".")
+	sels := make([]cue.Selector, len(parts))
+	for i, part := range parts {
+		sels[i] = cue.Str(part)
+	}
+	return v.LookupPath(cue.MakePath(sels...))
 }

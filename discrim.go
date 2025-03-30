@@ -2,20 +2,18 @@ package cuediscrim
 
 import (
 	"fmt"
+	"io"
 	"iter"
 	"maps"
-	"os"
 
 	"cuelang.org/go/cue"
 )
 
 var logger *indentWriter
 
-func init() {
-	if false {
-		logger = &indentWriter{
-			w: os.Stderr,
-		}
+func LogTo(w io.Writer) {
+	logger = &indentWriter{
+		w: w,
 	}
 }
 
@@ -95,12 +93,55 @@ func discriminate(arms []cue.Value, selected intSet) (_n DecisionNode) {
 		if full {
 			return buildDecisionFromDescriminators(path, values, selected, byValue, byKind)
 		}
-
 	}
-	// TODO try to find a discriminator that can distinguish between
-	// all the the non-struct values. We'll use
-	logger.Printf("no multiple discriminators available yet")
-	return ErrorNode{}
+	logger.Printf("no pure discriminator found; trying existence checks; selected %s", setString(selected))
+
+	// We haven't found any pure single discriminator.
+	// Now try to narrow things down by checking for field absence.
+	//
+	// Note that in general, testing for existence isn't useful because all the discrimination
+	// is based on requirements, and extra fields are generally allowed.
+	// So by testing for non-existence we can narrow things down
+	// one arm at a time.
+	possible := selected
+	branches := make(map[string]intSet)
+	for path, values := range allRequiredFields(arms, selected) {
+		group := existenceDiscriminator(values, selected)
+		logger.Printf("----- PATH %s %s; possible %s", path, setString(group), setString(possible))
+
+		if len(group) != len(selected)-1 {
+			continue
+		}
+		logger.Printf("it's possible!")
+		// we're deselecting exactly one member, but
+		// we want to be sure that we're removing something new.
+		removed := false
+		for i := range possible {
+			if !group[i] {
+				removed = true
+				break
+			}
+		}
+		if !removed {
+			logger.Printf("nothing removed")
+			continue
+		}
+		possible = possible.intersect(group)
+		branches[path] = group
+		if len(possible) == 0 {
+			break
+		}
+	}
+	if len(possible) > 0 {
+		// We haven't been able to form a discriminator.
+		// TODO better than this.
+		return &LeafNode{
+			Arms: selected,
+		}
+	}
+	return &FieldAbsenceNode{
+		Branches: branches,
+	}
 }
 
 func buildDecisionFromDescriminators(path string, values []cue.Value, selected intSet, byValue map[atom]intSet, byKind map[cue.Kind]intSet) DecisionNode {
@@ -120,7 +161,7 @@ func buildDecisionFromDescriminators(path string, values []cue.Value, selected i
 			case k == cue.StructKind && len(group) > 1:
 				// We need to disambiguate a struct.
 				branch = discriminate(values, group)
-			case group.equal(selected):
+			case group.Equal(selected):
 				// We've got nothing more to base a decision on,
 				// so terminate.
 				branch = &LeafNode{
@@ -143,7 +184,7 @@ func buildDecisionFromDescriminators(path string, values []cue.Value, selected i
 	}
 	for val, group := range byValue {
 		var branch DecisionNode
-		if group.equal(selected) {
+		if group.Equal(selected) {
 			// We've got nothing more to base a decision on,
 			// so terminate.
 			branch = &LeafNode{
@@ -156,6 +197,14 @@ func buildDecisionFromDescriminators(path string, values []cue.Value, selected i
 		valSwitch.Branches[val] = branch
 	}
 	return valSwitch
+}
+
+func discriminateSingleField(path string, arms []cue.Value, selected intSet, byValue map[atom]intSet, byKind map[cue.Kind]intSet) DecisionNode {
+
+	// Ideally we want to find a single field that we can just test for non-existence.
+	// In general, testing for existence isn't useful because all the discrimination
+	// is based on requirements, and extra fields are generally allowed.
+	return ErrorNode{}
 }
 
 func buildStructDecisionTree(arms []cue.Value, selected intSet) DecisionNode {
@@ -176,108 +225,6 @@ func buildStructDecisionTree(arms []cue.Value, selected intSet) DecisionNode {
 	return ErrorNode{} // TODO
 
 }
-
-//	how are we going to discriminate?
-//
-//		go through required fields in the selected arms breadth firsth
-//	logger.Printf("buildStruct %v", setString(selected))
-//	return &LeafNode{}
-//
-//}
-//
-//{a!: int} | {a!: string} | {b!: int}
-//
-//
-//a: (int string _)
-//
-//a: {
-//	int -> {0, 2}
-//	string -> {1, 2}
-//	{_|_, null, bytes, [], {}} -> {2}
-//}
-//b: {
-//	int -> {0, 1, 2}
-//	* -> {0, 1}
-//}
-//
-//we have a bunch of field -> set mappings
-//what strategy should we choose for choosing a discriminator?
-//
-//choose a partition key that maximises the number of partitions.
-//but what do we even mean by that?
-//
-//sort all the possible discriminators by:
-//	number of non-overlapping sets (highest priority)
-//	number of different sets
-//
-//choose the highest priority discriminator
-//
-//
-//enumerate the paths of all required fields
-//
-//	for each required field, store the valueSet for its value in each arm
-//
-//
-//
-//b: {0, 1
-
-// Try some discrimination on kind first.
-//string, "foo", {...}
-
-// logger.Printf("discriminate %v {", arms)
-// defer logger.Printf("}")
-//
-//	if len(arms) == 0 {
-//		// No arms => produce an "error" leaf node (or handle specially).
-//		// We'll do a LeafNode with no arms, signifying error or no match.
-//		return &LeafNode{}
-//	}
-//
-//	if len(arms) == 1 {
-//		// Exactly one arm => no further discrimination possible
-//		return &LeafNode{Arms: intSet{0: true}}
-//	}
-//
-// // Step 1: Group arms by top-level kind
-// kindGroups := make(map[cue.Kind][]Arm)
-//
-//	for _, arm := range arms {
-//		kind := arm.Value.IncompleteKind()
-//		kindGroups[kind] = append(kindGroups[kind], arm)
-//	}
-//
-//	if len(kindGroups) > 1 {
-//		logger.Printf("multiple kinds {")
-//		defer logger.Printf("}")
-//		// We have multiple kinds among the arms => top-level KindSwitch
-//		branches := make(map[cue.Kind]DecisionNode, len(kindGroups))
-//		for k, group := range kindGroups {
-//			branches[k] = discriminate(group)
-//		}
-//		return &KindSwitchNode{Branches: branches}
-//	}
-//
-// // If we get here, all arms share the same kind. The interesting case is struct discrimination.
-// theKind := arms[0].Value.IncompleteKind()
-//
-//	if theKind != cue.StructKind {
-//		// They might be all number or all string, but still distinct constraints.
-//		// For simplicity, we can't refine further => produce LeafNode with all indexes.
-//		return leafWithAllArms(arms)
-//	}
-//
-// // All arms are struct. Let's see if we can do a value-based switch on a field
-// // that’s required in all arms. If not, try presence-based on a field that’s
-// // required in only some arms.
-//
-//	if node := buildStructDiscriminator(arms); node != nil {
-//		return node
-//	}
-//
-// // can't refine further.
-// return leafWithAllArms(arms)
-//panic("TODO")
-//}
 
 // discriminators returns the possible discriminators between the selected elements
 // of the given arm values. The first returned value discriminates based on exact
@@ -309,6 +256,22 @@ func discriminators(arms0 []cue.Value, selected, needDiscrim intSet) (map[atom]i
 		delete(byKind, cue.BoolKind)
 	}
 	return byValue, byKind, fullyDiscriminated(iterConcat(maps.Values(byValue), maps.Values(byKind)), needDiscrim)
+}
+
+// existenceDiscriminator returns the subset of selected that checking for non-existence
+// will select.
+func existenceDiscriminator(arms []cue.Value, selected intSet) intSet {
+	discrim := make(intSet)
+	for i, v := range arms {
+		if selected[i] && !v.Exists() {
+			// Note: because we're only inspecting required fields,
+			// when v exists, we know it's required.
+			// As a corollary, when it doesn't exist, we know
+			// that checking for existence won't rule it out.
+			discrim[i] = true
+		}
+	}
+	return discrim
 }
 
 func hasConsts(arms []valueSet) bool {

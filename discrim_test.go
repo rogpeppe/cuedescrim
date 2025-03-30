@@ -1,6 +1,7 @@
 package cuediscrim
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -8,10 +9,17 @@ import (
 	"github.com/go-quicktest/qt"
 )
 
+type dataTest struct {
+	name string
+	cue  string
+	want intSet
+}
+
 var buildDecisionTreeTests = []struct {
 	testName string
 	cue      string
 	want     string
+	data     []dataTest
 }{{
 	testName: "SimpleKinds",
 	cue:      `string | int`,
@@ -23,6 +31,19 @@ case string:
 	choose({0})
 }
 `,
+	data: []dataTest{{
+		name: "int",
+		cue:  "123",
+		want: setOf(1),
+	}, {
+		name: "string",
+		cue:  `"foo"`,
+		want: setOf(0),
+	}, {
+		name: "error",
+		cue:  `true`,
+		want: nil,
+	}},
 }, {
 	testName: "SimpleValues",
 	cue:      `"foo" | "bar" | true`,
@@ -38,6 +59,22 @@ default:
 	error
 }
 `,
+	data: []dataTest{{
+		name: "bar",
+		cue:  `"bar"`,
+		want: setOf(1),
+	}, {
+		name: "foo",
+		cue:  `"foo"`,
+		want: setOf(0),
+	}, {
+		name: "true",
+		cue:  `true`,
+		want: setOf(2),
+	}, {
+		name: "other",
+		cue:  `{}`,
+	}},
 }, {
 	testName: "ValuesAndTypes",
 	cue:      `int | bool | (null | bytes) | "foo" | "bar"`,
@@ -60,6 +97,26 @@ default:
 	}
 }
 `,
+	data: []dataTest{{
+		name: "bar",
+		cue:  `"bar"`,
+		want: setOf(4),
+	}, {
+		name: "foo",
+		cue:  `"foo"`,
+		want: setOf(3),
+	}, {
+		name: "null",
+		cue:  `null`,
+		want: setOf(2),
+	}, {
+		name: "true",
+		cue:  `true`,
+		want: setOf(1),
+	}, {
+		name: "other",
+		cue:  `1.2`,
+	}},
 }, {
 	testName: "TwoStructs",
 	cue: `
@@ -80,6 +137,18 @@ default:
 	error
 }
 `,
+	data: []dataTest{{
+		name: "withFoo",
+		cue:  `{type: "foo", a: 3}`,
+		want: setOf(0),
+	}, {
+		name: "withBar",
+		cue:  `{type: "bar", b: false}`,
+		want: setOf(1),
+	}, {
+		name: "withOther",
+		cue:  `{type: "other"}`,
+	}},
 }, {
 	testName: "StructsWithNestedDiscriminator",
 	cue: `
@@ -100,6 +169,18 @@ default:
 	error
 }
 `,
+	data: []dataTest{{
+		name: "withFoo",
+		cue:  `{discrim: kind: "foo", a: 3}`,
+		want: setOf(0),
+	}, {
+		name: "withBar",
+		cue:  `{discrim: kind: "bar", a: 3}`,
+		want: setOf(1),
+	}, {
+		name: "withOther",
+		cue:  `{type: "other"}`,
+	}},
 }, {
 	testName: "StructsWithSeveralPotentialDiscriminators",
 	cue: `
@@ -165,11 +246,63 @@ case struct:
 }
 `,
 	want: `
-error
+choose({0, 1, 2})
+`}, {
+	testName: "MatchN",
+	cue:      `matchN(1, [true, false])`,
+	want: `
+switch . {
+case false:
+	choose({1})
+case true:
+	choose({0})
+default:
+	error
+}
 `,
+}, {
+	testName: "MultipleDisjointStructs",
+	cue: `
+{a!: int} | {b!: string} | {c!: bool}
+`,
+	want: `
+allOf {
+	notPresent(a) -> {1, 2}
+	notPresent(b) -> {0, 2}
+	notPresent(c) -> {0, 1}
+}
+`,
+	data: []dataTest{{
+		name: "hasA",
+		cue:  `{a: 5}`,
+		want: setOf(0),
+	}, {
+		name: "hasB",
+		cue:  `{b: "ff"}`,
+		want: setOf(1),
+	}, {
+		name: "hasC",
+		cue:  `{b: "ff"}`,
+		want: setOf(1),
+	}, {
+		name: "hasAB",
+		cue:  `{a: 1, b: "x"}`,
+		want: setOf(0, 1),
+	}, {
+		name: "hasAll",
+		cue:  `{a: 1, b: "x", c: true}`,
+		want: setOf(0, 1, 2),
+	}, {
+		name: "hasDifferentType",
+		cue:  `{a: true}`,
+		want: setOf(0),
+	}},
 }}
 
 func TestBuildDecisionTree(t *testing.T) {
+	if testing.Verbose() {
+		LogTo(os.Stderr)
+	}
 	for _, test := range buildDecisionTreeTests {
 		t.Run(test.testName, func(t *testing.T) {
 			ctx := cuecontext.New()
@@ -178,6 +311,14 @@ func TestBuildDecisionTree(t *testing.T) {
 
 			tree := Discriminate(val)
 			qt.Assert(t, qt.Equals(NodeString(tree), strings.TrimPrefix(test.want, "\n")))
+
+			for _, dtest := range test.data {
+				t.Run(dtest.name, func(t *testing.T) {
+					data := ctx.CompileString(dtest.cue)
+					got := tree.Check(data)
+					qt.Assert(t, qt.DeepEquals(got, dtest.want))
+				})
+			}
 		})
 	}
 }
@@ -207,4 +348,15 @@ hello {
 	}
 } something
 `[1:]))
+}
+
+func setOf[T comparable](xs ...T) set[T] {
+	if len(xs) == 0 {
+		return nil
+	}
+	s := make(set[T])
+	for _, x := range xs {
+		s[x] = true
+	}
+	return s
 }

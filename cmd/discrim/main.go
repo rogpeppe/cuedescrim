@@ -15,6 +15,8 @@ import (
 	"github.com/rogpeppe/cuediscrim"
 )
 
+var flagVerbose = flag.Bool("v", false, "vebose logging")
+
 func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: discrim <expr> [<cue-package>]\n")
@@ -23,6 +25,9 @@ func main() {
 	flag.Parse()
 	if flag.NArg() != 1 && flag.NArg() != 2 {
 		flag.Usage()
+	}
+	if *flagVerbose {
+		cuediscrim.LogTo(os.Stderr)
 	}
 	ctx := cuecontext.New()
 	expr, err := parser.ParseExpr("expression", flag.Arg(0))
@@ -40,5 +45,5 @@ func main() {
 		scope = vs[0]
 	}
 	v := ctx.BuildExpr(expr, cue.Scope(scope), cue.InferBuiltins(true))
-	fmt.Println(cuediscrim.NodeString(cuediscrim.Discriminate(v)))
+	fmt.Print(cuediscrim.NodeString(cuediscrim.Discriminate(v)))
 }

@@ -115,6 +115,19 @@ var valueSetForValueTests = []struct {
 			consts: set[atom]{`"one"`: true, `"two"`: true},
 		},
 	},
+	{
+		name: "bottom",
+		cue:  `_|_`,
+		want: valueSet{
+			types: cue.BottomKind,
+		},
+	},
+}
+
+func TestValueSetForZeroValue(t *testing.T) {
+	qt.Assert(t, deepEquals(valueSetForValue(cue.Value{}), valueSet{
+		types: cue.BottomKind,
+	}))
 }
 
 func TestValueSetForValue(t *testing.T) {
@@ -229,7 +242,6 @@ func TestValueSetIsEmpty(t *testing.T) {
 		var empty valueSet
 		qt.Assert(t, qt.IsTrue(empty.isEmpty()))
 	})
-
 	t.Run("string-literal_isEmpty_=>_false", func(t *testing.T) {
 		foo := toVS(`"foo"`)
 		qt.Assert(t, qt.IsFalse(foo.isEmpty()))
@@ -256,7 +268,7 @@ func deepEquals[T any](got, want T) qt.Checker {
 // We'll define a helper for clarity.
 func toVS(expr string) valueSet {
 	v := cuecontext.New().CompileString(expr)
-	if err := v.Err(); err != nil {
+	if err := v.Err(); err != nil && expr != "_|_" {
 		panic(err)
 	}
 	return valueSetForValue(v)
