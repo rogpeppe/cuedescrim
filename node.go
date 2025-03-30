@@ -32,21 +32,6 @@ func NodeString(n DecisionNode) string {
 	return buf.String()
 }
 
-// AllNode holds the result of checking all its component nodes.
-type AllNode struct {
-	Nodes []DecisionNode
-}
-
-func (n *AllNode) Check(v cue.Value) intSet {
-	return fold(iterMap(slices.Values(n.Nodes), func(n DecisionNode) intSet {
-		return n.Check(v)
-	}), intSet.intersect)
-}
-
-func (n *AllNode) Possible() intSet {
-	return fold(iterMap(slices.Values(n.Nodes), DecisionNode.Possible), intSet.intersect)
-}
-
 // LeafNode represents a terminal node, which can contain one or more arms (if indistinguishable).
 type LeafNode struct {
 	// Arms holds the indexes of the disjunction that
