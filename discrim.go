@@ -21,27 +21,42 @@ func LogTo(w io.Writer) {
 // to decide which arm of a disjunction should be chosen.
 // If v is not a disjunction, it returns a decision node that
 // just selects v itself.
-func Discriminate(v cue.Value) DecisionNode {
-	op, args := v.Expr()
+func Discriminate(arms []cue.Value) DecisionNode {
+	return discriminate(arms, intSetN(len(arms)))
+}
+
+// Disjunctions splits v into its component disjunctions,
+// including disjunctions in subexpressions.
+// Any matchN operator with an argument of 1 also counts as a disjunction.
+func Disjunctions(v cue.Value) []cue.Value {
+	return appendDisjunctions(nil, v)
+}
+
+func appendDisjunctions(dst []cue.Value, v cue.Value) []cue.Value {
+	op, args := v.Eval().Expr()
 	switch op {
 	case cue.OrOp:
+		for _, v := range args {
+			dst = appendDisjunctions(dst, v)
+		}
+		return dst
 	case cue.CallOp:
 		if fmt.Sprint(args[0]) != "matchN" {
 			break
 		}
-		if args[2].Kind() != cue.ListKind {
+		if n, _ := args[1].Int64(); n != 1 {
 			break
 		}
-		var arms []cue.Value
-		if err := args[2].Decode(&arms); err != nil {
-			panic(err)
+		iter, err := args[2].List()
+		if err != nil {
+			break
 		}
-		args = arms
+		for iter.Next() {
+			dst = appendDisjunctions(dst, iter.Value())
+		}
+		return dst
 	}
-	if args == nil {
-		args = []cue.Value{v}
-	}
-	return discriminate(args, intSetN(len(args)))
+	return append(dst, v)
 }
 
 func discriminate(arms []cue.Value, selected intSet) (_n DecisionNode) {
@@ -199,33 +214,6 @@ func buildDecisionFromDescriminators(path string, values []cue.Value, selected i
 	return valSwitch
 }
 
-func discriminateSingleField(path string, arms []cue.Value, selected intSet, byValue map[atom]intSet, byKind map[cue.Kind]intSet) DecisionNode {
-
-	// Ideally we want to find a single field that we can just test for non-existence.
-	// In general, testing for existence isn't useful because all the discrimination
-	// is based on requirements, and extra fields are generally allowed.
-	return ErrorNode{}
-}
-
-func buildStructDecisionTree(arms []cue.Value, selected intSet) DecisionNode {
-	//	fields := make(map[string][]cue.Value)
-	//	for i, arm := range arms {
-	//		for field, v := range allRequiredFields(arm) {
-	//			entry, ok := fields[field]
-	//			if !ok {
-	//				entry = make([]cue.Value, len(arms))
-	//				fields[field] = entry
-	//			}
-	//			entry[i] = v
-	//		}
-	//	}
-	//if we can look up
-	// Note: values that aren't present will hold the zero value
-	// which works out OK because the kind of the zero value is bottom.
-	return ErrorNode{} // TODO
-
-}
-
 // discriminators returns the possible discriminators between the selected elements
 // of the given arm values. The first returned value discriminates based on exact
 // value; the second discriminates based on kind.
@@ -361,22 +349,6 @@ func fullyDiscriminated(it iter.Seq[intSet], selected intSet) bool {
 		}
 	}
 	return len(found) == len(selected)
-}
-
-func allEqFunc[T any](it iter.Seq[T], eq func(T, T) bool) bool {
-	first := true
-	var firstItem T
-	for x := range it {
-		if first {
-			firstItem = x
-			first = false
-		} else {
-			if !eq(x, firstItem) {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func mapHasKey[Map ~map[K]V, K comparable, V any](m Map, k K) bool {

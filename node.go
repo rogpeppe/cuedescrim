@@ -172,10 +172,6 @@ func (n *ValueSwitchNode) write(w *indentWriter) {
 	w.Printf("}")
 }
 
-func isError(n DecisionNode) bool {
-	return n == nil || n == ErrorNode{}
-}
-
 type ErrorNode struct{}
 
 func (ErrorNode) Possible() intSet {

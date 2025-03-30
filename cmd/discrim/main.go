@@ -77,7 +77,13 @@ the -v flag causes all decision trees to be printed.
 		flag.Usage()
 	}
 	v := ctx.BuildExpr(expr, cue.Scope(scope), cue.InferBuiltins(true))
-	fmt.Print(cuediscrim.NodeString(cuediscrim.Discriminate(v)))
+	arms := cuediscrim.Disjunctions(v)
+	if *flagDebug {
+		for i, arm := range arms {
+			fmt.Fprintf(os.Stderr, "%d: %v: %v\n", i, arm.Pos(), arm)
+		}
+	}
+	fmt.Print(cuediscrim.NodeString(cuediscrim.Discriminate(arms)))
 }
 
 func walkFields(v cue.Value) {
@@ -91,10 +97,10 @@ func walkFields(v cue.Value) {
 	for iter.Next() {
 		v := iter.Value()
 		if isDisjunction(v) {
-			n := cuediscrim.Discriminate(v)
+			n := cuediscrim.Discriminate(cuediscrim.Disjunctions(v))
 			if *flagVerbose || !isPerfect(n) {
 				fmt.Printf("%v: %v\n", v.Pos(), v.Path())
-				fmt.Print(cuediscrim.NodeString(cuediscrim.Discriminate(v)))
+				fmt.Print(cuediscrim.NodeString(n))
 				fmt.Println("")
 			}
 

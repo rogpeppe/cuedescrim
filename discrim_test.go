@@ -81,9 +81,9 @@ default:
 	want: `
 switch . {
 case "bar":
-	choose({4})
+	choose({5})
 case "foo":
-	choose({3})
+	choose({4})
 default:
 	switch kind(.) {
 	case null:
@@ -93,18 +93,18 @@ default:
 	case int:
 		choose({0})
 	case bytes:
-		choose({2})
+		choose({3})
 	}
 }
 `,
 	data: []dataTest{{
 		name: "bar",
 		cue:  `"bar"`,
-		want: setOf(4),
+		want: setOf(5),
 	}, {
 		name: "foo",
 		cue:  `"foo"`,
-		want: setOf(3),
+		want: setOf(4),
 	}, {
 		name: "null",
 		cue:  `null`,
@@ -309,7 +309,9 @@ func TestBuildDecisionTree(t *testing.T) {
 			val := ctx.CompileString(test.cue)
 			qt.Assert(t, qt.IsNil(val.Err()))
 
-			tree := Discriminate(val)
+			arms := Disjunctions(val)
+			t.Logf("arms: %v", arms)
+			tree := Discriminate(arms)
 			qt.Assert(t, qt.Equals(NodeString(tree), strings.TrimPrefix(test.want, "\n")))
 
 			for _, dtest := range test.data {

@@ -41,10 +41,6 @@ func valueSetForValue(v cue.Value) valueSet {
 	return s
 }
 
-type typeProbe struct {
-	types cue.Kind
-}
-
 var allKinds = []cue.Kind{
 	cue.BottomKind, // Note: bottom is used to represent a missing field.
 	cue.NullKind,
