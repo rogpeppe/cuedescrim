@@ -9,7 +9,6 @@ import (
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/cuecontext"
-	"cuelang.org/go/cue/errors"
 	"cuelang.org/go/cue/load"
 	"cuelang.org/go/cue/parser"
 
@@ -53,10 +52,7 @@ package specified.
 		log.Fatalf("-e requires exactly one package to be specifed")
 	}
 	if expr != nil {
-		scope := ctx.BuildInstance(insts[0])
-		if err := scope.Err(); err != nil {
-			log.Fatalf("cannot build instance: %v", errors.Details(err, nil))
-		}
+		scope := ctx.BuildInstance(insts[0]) // Ignore error.
 		var opts []cuediscrim.Option
 		if *flagVerbose {
 			opts = append(opts, cuediscrim.LogTo(os.Stderr))
