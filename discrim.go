@@ -1,7 +1,6 @@
 package cuediscrim
 
 import (
-	"fmt"
 	"io"
 	"iter"
 	"maps"
@@ -9,67 +8,68 @@ import (
 	"cuelang.org/go/cue"
 )
 
-var logger *indentWriter
+type options struct {
+	logger *indentWriter
+}
 
-func LogTo(w io.Writer) {
-	logger = &indentWriter{
-		w: w,
+// LogTo causes debug information to be written to w.
+func LogTo(w io.Writer) Option {
+	return func(opts *options) {
+		opts.logger = &indentWriter{
+			w: w,
+		}
 	}
 }
+
+type Option func(*options)
 
 // Discriminate returns a decision tree that can be used
-// to decide which arm of a disjunction should be chosen.
-// If v is not a disjunction, it returns a decision node that
-// just selects v itself.
-func Discriminate(arms []cue.Value) DecisionNode {
-	return discriminate(arms, intSetN(len(arms)))
-}
-
-// Disjunctions splits v into its component disjunctions,
-// including disjunctions in subexpressions.
-// Any matchN operator with an argument of 1 also counts as a disjunction.
-func Disjunctions(v cue.Value) []cue.Value {
-	return appendDisjunctions(nil, v)
-}
-
-func appendDisjunctions(dst []cue.Value, v cue.Value) []cue.Value {
-	op, args := v.Eval().Expr()
-	switch op {
-	case cue.OrOp:
-		for _, v := range args {
-			dst = appendDisjunctions(dst, v)
-		}
-		return dst
-	case cue.CallOp:
-		if fmt.Sprint(args[0]) != "matchN" {
-			break
-		}
-		if n, _ := args[1].Int64(); n != 1 {
-			break
-		}
-		iter, err := args[2].List()
-		if err != nil {
-			break
-		}
-		for iter.Next() {
-			dst = appendDisjunctions(dst, iter.Value())
-		}
-		return dst
+// to decide between the given values, assuming they're
+// all arms of a disjunction. See [Disjunctions] for a way
+// to split a value into its component disjunctions recursively.
+func Discriminate(arms []cue.Value, optArgs ...Option) DecisionNode {
+	var opts options
+	for _, f := range optArgs {
+		f(&opts)
 	}
-	return append(dst, v)
+	if len(arms) <= 64 {
+		d := &discriminator[wordSet]{
+			options: opts,
+			sets:    wordSetAPI{},
+		}
+		return d.discriminate(arms, wordSetN(len(arms)))
+	}
+	d := &discriminator[mapSet[int]]{
+		options: opts,
+		sets:    mapSetAPI[int]{},
+	}
+	m := make(mapSet[int])
+	for i := range len(arms) {
+		m[i] = true
+	}
+	return d.discriminate(arms, m)
 }
 
-func discriminate(arms []cue.Value, selected intSet) (_n DecisionNode) {
-	logger.Printf("discriminate %v {", setString(selected))
-	logger.Indent()
+type discriminator[Set any] struct {
+	sets setAPI[Set, int]
+	options
+}
+
+func (d *discriminator[Set]) setString(s Set) string {
+	return setString(d.sets.asSet(s))
+}
+
+func (d *discriminator[Set]) discriminate(arms []cue.Value, selected Set) (_n DecisionNode) {
+	d.logger.Printf("discriminate %v {", d.setString(selected))
+	d.logger.Indent()
 	defer func() {
-		logger.Printf("} -> %T", _n)
+		d.logger.Printf("} -> %T", _n)
 	}()
-	defer logger.Unindent()
-	if len(selected) <= 1 {
+	defer d.logger.Unindent()
+	if d.sets.len(selected) <= 1 {
 		// Nothing to disambiguate.
 		return &LeafNode{
-			Arms: selected,
+			Arms: d.sets.asSet(selected),
 		}
 	}
 	// First try to discriminate based on the top level value only.
@@ -77,39 +77,39 @@ func discriminate(arms []cue.Value, selected intSet) (_n DecisionNode) {
 	// it "fully discriminated" if all the non-struct elements
 	// are discriminated, assuming there are such elements.
 	// If there aren't then we require all elements to be discriminated.
-	needDiscrim := make(intSet)
+	needDiscrim := d.sets.make()
 	for i, v := range arms {
 		if (v.IncompleteKind() & cue.StructKind) == 0 {
-			needDiscrim[i] = true
+			d.sets.add(&needDiscrim, i)
 		}
 	}
-	if len(needDiscrim) == 0 {
+	if d.sets.len(needDiscrim) == 0 {
 		needDiscrim = selected
 	}
-	byValue, byKind, full := discriminators(arms, selected, needDiscrim)
+	byValue, byKind, full := d.discriminators(arms, selected, needDiscrim)
 	if full {
-		return buildDecisionFromDescriminators(".", arms, selected, byValue, byKind)
+		return d.buildDecisionFromDescriminators(".", arms, selected, byValue, byKind)
 	}
 	// First try to find a single discriminator that can be used to do all discrimination.
-	for path, values := range allRequiredFields(arms, selected) {
-		logger.Printf("----- PATH %s", path)
-		byValue, byKind, full := discriminators(values, selected, selected)
+	for path, values := range allRequiredFields(arms, d.sets.asSet(selected)) {
+		d.logger.Printf("----- PATH %s", path)
+		byValue, byKind, full := d.discriminators(values, selected, selected)
 		if full {
-			logger.Printf("fully discriminated")
+			d.logger.Printf("fully discriminated")
 		}
-		logger.Printf("values:")
+		d.logger.Printf("values:")
 		for v, group := range byValue {
-			logger.Printf("	%v: %v", v, setString(group))
+			d.logger.Printf("	%v: %v", v, d.setString(group))
 		}
-		logger.Printf("kinds:")
+		d.logger.Printf("kinds:")
 		for k, group := range byKind {
-			logger.Printf("	%v: %v", k, setString(group))
+			d.logger.Printf("	%v: %v", k, d.setString(group))
 		}
 		if full {
-			return buildDecisionFromDescriminators(path, values, selected, byValue, byKind)
+			return d.buildDecisionFromDescriminators(path, values, selected, byValue, byKind)
 		}
 	}
-	logger.Printf("no pure discriminator found; trying existence checks; selected %s", setString(selected))
+	d.logger.Printf("no pure discriminator found; trying existence checks; selected %s", d.setString(selected))
 
 	// We haven't found any pure single discriminator.
 	// Now try to narrow things down by checking for field absence.
@@ -119,39 +119,39 @@ func discriminate(arms []cue.Value, selected intSet) (_n DecisionNode) {
 	// So by testing for non-existence we can narrow things down
 	// one arm at a time.
 	possible := selected
-	branches := make(map[string]intSet)
-	for path, values := range allRequiredFields(arms, selected) {
-		group := existenceDiscriminator(values, selected)
-		logger.Printf("----- PATH %s %s; possible %s", path, setString(group), setString(possible))
+	branches := make(map[string]IntSet)
+	for path, values := range allRequiredFields(arms, d.sets.asSet(selected)) {
+		group := d.existenceDiscriminator(values, selected)
+		d.logger.Printf("----- PATH %s %s; possible %s", path, d.setString(group), d.setString(possible))
 
-		if len(group) != len(selected)-1 {
+		if d.sets.len(group) != d.sets.len(selected)-1 {
 			continue
 		}
-		logger.Printf("it's possible!")
+		d.logger.Printf("it's possible!")
 		// we're deselecting exactly one member, but
 		// we want to be sure that we're removing something new.
 		removed := false
-		for i := range possible {
-			if !group[i] {
+		for i := range d.sets.values(possible) {
+			if !d.sets.has(group, i) {
 				removed = true
 				break
 			}
 		}
 		if !removed {
-			logger.Printf("nothing removed")
+			d.logger.Printf("nothing removed")
 			continue
 		}
-		possible = possible.intersect(group)
-		branches[path] = group
-		if len(possible) == 0 {
+		possible = d.sets.intersect(possible, group)
+		branches[path] = d.sets.asSet(group)
+		if d.sets.len(possible) == 0 {
 			break
 		}
 	}
-	if len(possible) > 0 {
+	if d.sets.len(possible) > 0 {
 		// We haven't been able to form a discriminator.
 		// TODO better than this.
 		return &LeafNode{
-			Arms: selected,
+			Arms: d.sets.asSet(selected),
 		}
 	}
 	return &FieldAbsenceNode{
@@ -159,7 +159,7 @@ func discriminate(arms []cue.Value, selected intSet) (_n DecisionNode) {
 	}
 }
 
-func buildDecisionFromDescriminators(path string, values []cue.Value, selected intSet, byValue map[atom]intSet, byKind map[cue.Kind]intSet) DecisionNode {
+func (d *discriminator[Set]) buildDecisionFromDescriminators(path string, values []cue.Value, selected Set, byValue map[Atom]Set, byKind map[cue.Kind]Set) DecisionNode {
 	var kindSwitch DecisionNode
 	if len(byKind) == 0 {
 		kindSwitch = ErrorNode{}
@@ -170,20 +170,20 @@ func buildDecisionFromDescriminators(path string, values []cue.Value, selected i
 			Branches: make(map[cue.Kind]DecisionNode, len(byKind)),
 		}
 		for k, group := range byKind {
-			logger.Printf("kind %v: %v", k, setString(group))
+			d.logger.Printf("kind %v: %v", k, d.setString(group))
 			var branch DecisionNode
 			switch {
-			case k == cue.StructKind && len(group) > 1:
+			case k == cue.StructKind && d.sets.len(group) > 1:
 				// We need to disambiguate a struct.
-				branch = discriminate(values, group)
-			case group.Equal(selected):
+				branch = d.discriminate(values, group)
+			case d.sets.equal(group, selected):
 				// We've got nothing more to base a decision on,
 				// so terminate.
 				branch = &LeafNode{
-					Arms: selected,
+					Arms: d.sets.asSet(selected),
 				}
 			default:
-				branch = discriminate(values, group)
+				branch = d.discriminate(values, group)
 			}
 			n.Branches[k] = branch
 		}
@@ -194,20 +194,20 @@ func buildDecisionFromDescriminators(path string, values []cue.Value, selected i
 	}
 	valSwitch := &ValueSwitchNode{
 		Path:     path,
-		Branches: make(map[atom]DecisionNode, len(byValue)),
+		Branches: make(map[Atom]DecisionNode, len(byValue)),
 		Default:  kindSwitch,
 	}
 	for val, group := range byValue {
 		var branch DecisionNode
-		if group.Equal(selected) {
+		if d.sets.equal(group, selected) {
 			// We've got nothing more to base a decision on,
 			// so terminate.
 			branch = &LeafNode{
-				Arms: selected,
+				Arms: d.sets.asSet(selected),
 			}
 		} else {
-			logger.Printf("valSwitch %v", val)
-			branch = discriminate(values, group)
+			d.logger.Printf("valSwitch %v", val)
+			branch = d.discriminate(values, group)
 		}
 		valSwitch.Branches[val] = branch
 	}
@@ -223,40 +223,40 @@ func buildDecisionFromDescriminators(path string, values []cue.Value, selected i
 //
 // It also reports whether the returned discrimators will fully discriminate
 // the elements of needDiscrim
-func discriminators(arms0 []cue.Value, selected, needDiscrim intSet) (map[atom]intSet, map[cue.Kind]intSet, bool) {
+func (d *discriminator[Set]) discriminators(arms0 []cue.Value, selected, needDiscrim Set) (map[Atom]Set, map[cue.Kind]Set, bool) {
 	arms := make([]valueSet, len(arms0))
-	for i := range selected {
+	for i := range d.sets.values(selected) {
 		arms[i] = valueSetForValue(arms0[i])
 	}
-	byKind := kindDiscrim(arms, selected, valueSet.kinds)
-	full := fullyDiscriminated(maps.Values(byKind), needDiscrim)
+	byKind := d.kindDiscrim(arms, selected, valueSet.kinds)
+	full := d.fullyDiscriminated(maps.Values(byKind), needDiscrim)
 	if !hasConsts(arms) || full {
 		return nil, byKind, full
 	}
-	byValue := valueDiscrim(arms, selected)
-	byKind = kindDiscrim(arms, selected, func(v valueSet) cue.Kind {
+	byValue := d.valueDiscrim(arms, selected)
+	byKind = d.kindDiscrim(arms, selected, func(v valueSet) cue.Kind {
 		return v.types
 	})
 	if mapHasKey(byKind, cue.NullKind) {
-		delete(byValue, "null")
+		delete(byValue, Atom{"null"})
 	}
-	if mapHasKey(byValue, "true") && mapHasKey(byValue, "false") {
+	if mapHasKey(byValue, Atom{"true"}) && mapHasKey(byValue, Atom{"false"}) {
 		delete(byKind, cue.BoolKind)
 	}
-	return byValue, byKind, fullyDiscriminated(iterConcat(maps.Values(byValue), maps.Values(byKind)), needDiscrim)
+	return byValue, byKind, d.fullyDiscriminated(iterConcat(maps.Values(byValue), maps.Values(byKind)), needDiscrim)
 }
 
 // existenceDiscriminator returns the subset of selected that checking for non-existence
 // will select.
-func existenceDiscriminator(arms []cue.Value, selected intSet) intSet {
-	discrim := make(intSet)
+func (d *discriminator[Set]) existenceDiscriminator(arms []cue.Value, selected Set) Set {
+	discrim := d.sets.make()
 	for i, v := range arms {
-		if selected[i] && !v.Exists() {
+		if d.sets.has(selected, i) && !v.Exists() {
 			// Note: because we're only inspecting required fields,
 			// when v exists, we know it's required.
 			// As a corollary, when it doesn't exist, we know
 			// that checking for existence won't rule it out.
-			discrim[i] = true
+			d.sets.add(&discrim, i)
 		}
 	}
 	return discrim
@@ -271,20 +271,19 @@ func hasConsts(arms []valueSet) bool {
 	return false
 }
 
-func kindDiscrim(arms []valueSet, selected intSet, armKind func(valueSet) cue.Kind) map[cue.Kind]intSet {
-	m := make(map[cue.Kind]intSet)
+func (d *discriminator[Set]) kindDiscrim(arms []valueSet, selected Set, armKind func(valueSet) cue.Kind) map[cue.Kind]Set {
+	m := make(map[cue.Kind]Set)
 	for i, arm := range arms {
-		if !selected[i] {
+		if !d.sets.has(selected, i) {
 			continue
 		}
 		for _, k := range allKinds {
 			if (armKind(arm) & k) == 0 {
 				continue
 			}
-			if m[k] == nil {
-				m[k] = make(intSet)
-			}
-			m[k][i] = true
+			s := m[k]
+			d.sets.add(&s, i)
+			m[k] = s
 		}
 	}
 	return m
@@ -294,31 +293,34 @@ func kindDiscrim(arms []valueSet, selected intSet, armKind func(valueSet) cue.Ki
 // which arms are known to be selected for those
 // values. It also returns a map from type to arm sets
 // for values outside the known constants.
-func valueDiscrim(arms []valueSet, selected intSet) map[atom]intSet {
-	var byValue map[atom]intSet
+func (d *discriminator[Set]) valueDiscrim(arms []valueSet, selected Set) map[Atom]Set {
+	var byValue map[Atom]Set
 	for i, arm := range arms {
-		if !selected[i] {
+		if !d.sets.has(selected, i) {
 			continue
 		}
 		for c := range arm.consts {
 			if byValue == nil {
-				byValue = make(map[atom]intSet)
+				byValue = make(map[Atom]Set)
 			}
-			if byValue[c] == nil {
-				byValue[c] = make(intSet)
-			}
-			byValue[c][i] = true
+			s := byValue[c]
+			d.sets.add(&s, i)
+			byValue[c] = s
 		}
 	}
 	// Ensure that every value in byValue also includes
 	// arms that don't have constants but do allow the
 	// const.
 	for c, group := range byValue {
-		getm := copyMap(&group)
+		changed := false
 		kind := c.kind()
 		for i, a := range arms {
-			if (a.types & kind) != 0 {
-				getm()[i] = true
+			if (a.types&kind) != 0 && !d.sets.has(group, i) {
+				if !changed {
+					group = d.sets.clone(group)
+					changed = true
+				}
+				d.sets.add(&group, i)
 			}
 		}
 		byValue[c] = group
@@ -331,24 +333,22 @@ func valueDiscrim(arms []valueSet, selected intSet) map[atom]intSet {
 // that is, each member of the sequence must select
 // at most one element and all the elements in selected
 // must be present at least once.
-func fullyDiscriminated(it iter.Seq[intSet], selected intSet) bool {
-	found := make(intSet)
+func (d *discriminator[Set]) fullyDiscriminated(it iter.Seq[Set], selected Set) bool {
+	found := d.sets.make()
 	for x := range it {
 		n := 0
-		for y := range x {
-			if !selected[y] {
+		for y := range d.sets.values(x) {
+			if !d.sets.has(selected, y) {
 				continue
 			}
-			if !found[y] {
-				found[y] = true
-			}
+			d.sets.add(&found, y)
 			n++
 		}
 		if n > 1 {
 			return false
 		}
 	}
-	return len(found) == len(selected)
+	return d.sets.len(found) == d.sets.len(selected)
 }
 
 func mapHasKey[Map ~map[K]V, K comparable, V any](m Map, k K) bool {
@@ -366,15 +366,4 @@ func iterConcat[T any](iters ...iter.Seq[T]) iter.Seq[T] {
 			}
 		}
 	}
-}
-
-func intSetN(n int) intSet {
-	if n == 0 {
-		return nil
-	}
-	s := make(intSet)
-	for i := range n {
-		s[i] = true
-	}
-	return s
 }

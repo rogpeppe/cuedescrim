@@ -10,6 +10,14 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
+func atoms(as ...string) mapSet[Atom] {
+	s := make(mapSet[Atom])
+	for _, a := range as {
+		s[Atom{a}] = true
+	}
+	return s
+}
+
 var valueSetForValueTests = []struct {
 	name string
 	cue  string
@@ -19,35 +27,35 @@ var valueSetForValueTests = []struct {
 		name: "bool literal true",
 		cue:  `true`,
 		want: valueSet{
-			consts: set[atom]{`true`: true},
+			consts: atoms(`true`),
 		},
 	},
 	{
 		name: "bool literal false",
 		cue:  `false`,
 		want: valueSet{
-			consts: set[atom]{`false`: true},
+			consts: atoms(`false`),
 		},
 	},
 	{
 		name: "int literal 42",
 		cue:  `42`,
 		want: valueSet{
-			consts: set[atom]{`42`: true},
+			consts: atoms(`42`),
 		},
 	},
 	{
 		name: "float literal 3.14",
 		cue:  `3.14`,
 		want: valueSet{
-			consts: set[atom]{`3.14`: true},
+			consts: atoms(`3.14`),
 		},
 	},
 	{
 		name: "string literal hello",
 		cue:  `"hello"`,
 		want: valueSet{
-			consts: set[atom]{`"hello"`: true},
+			consts: atoms(`"hello"`),
 		},
 	},
 	{
@@ -89,7 +97,7 @@ var valueSetForValueTests = []struct {
 		name: "or of 'hello' and 'world'",
 		cue:  `"hello" | "world"`,
 		want: valueSet{
-			consts: set[atom]{`"hello"`: true, `"world"`: true},
+			consts: atoms(`"hello"`, `"world"`),
 		},
 	},
 	{
@@ -97,7 +105,7 @@ var valueSetForValueTests = []struct {
 		cue:  `"foo" | bool`,
 		want: valueSet{
 			types:  cue.BoolKind,
-			consts: set[atom]{`"foo"`: true},
+			consts: atoms(`"foo"`),
 		},
 	},
 	{
@@ -112,7 +120,7 @@ var valueSetForValueTests = []struct {
 		cue:  `{foo!: int} | [] | "one" | "two" | 2 | number`,
 		want: valueSet{
 			types:  cue.ListKind | cue.NumberKind | cue.StructKind,
-			consts: set[atom]{`"one"`: true, `"two"`: true},
+			consts: atoms(`"one"`, `"two"`),
 		},
 	},
 	{
@@ -152,7 +160,7 @@ func TestValueSetOperations(t *testing.T) {
 			b:    `false`,
 			op:   valueSet.union,
 			want: valueSet{
-				consts: set[atom]{`true`: true, `false`: true},
+				consts: atoms(`true`, `false`),
 			},
 		},
 		{
@@ -161,7 +169,7 @@ func TestValueSetOperations(t *testing.T) {
 			b:    `"foo"`,
 			op:   valueSet.intersect,
 			want: valueSet{
-				consts: set[atom]{`"foo"`: true},
+				consts: atoms(`"foo"`),
 			},
 		},
 		{
@@ -179,7 +187,7 @@ func TestValueSetOperations(t *testing.T) {
 			b:    `"a" | true`,
 			op:   valueSet.intersect,
 			want: valueSet{
-				consts: set[atom]{`"a"`: true, "true": true},
+				consts: atoms(`"a"`, "true"),
 			},
 		},
 		{
@@ -206,7 +214,7 @@ func TestValueSetOperations(t *testing.T) {
 			b:    `true`,
 			op:   valueSet.intersect,
 			want: valueSet{
-				consts: set[atom]{`true`: true},
+				consts: atoms(`true`),
 			},
 		},
 		{
@@ -262,7 +270,28 @@ func TestValueSetIsEmpty(t *testing.T) {
 // deepEquals is a small helper that creates a checker
 // for comparing two values by deep equality (including unexported fields).
 func deepEquals[T any](got, want T) qt.Checker {
-	return qt.CmpEquals(got, want, cmp.AllowUnexported(valueSet{}))
+	return qt.CmpEquals(got, want,
+		cmp.AllowUnexported(valueSet{}),
+		cmp.Comparer(func(s1, s2 IntSet) bool {
+			if s1 == nil {
+				panic("nil s1")
+			}
+			if s2 == nil {
+				panic("nil s2")
+			}
+			// TODO see issue https://github.com/google/go-cmp/issues/161
+			// which makes this much less useful.
+			if s1.Len() != s2.Len() {
+				return false
+			}
+			for k := range s1.Values() {
+				if !s2.Has(k) {
+					return false
+				}
+			}
+			return true
+		}),
+	)
 }
 
 // We'll define a helper for clarity.

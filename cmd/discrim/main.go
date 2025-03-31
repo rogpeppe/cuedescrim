@@ -17,76 +17,83 @@ import (
 )
 
 var (
-	flagDebug   = flag.Bool("debug", false, "debug logging")
-	flagPackage = flag.String("p", "", "package or CUE file to evaluate expression in")
-	flagAll     = flag.Bool("a", false, "evaluate on all disjunctions/matchN fields in the package (default .)")
-	flagVerbose = flag.Bool("v", false, "cause -a to show good discriminators too")
+	flagAll      = flag.Bool("a", false, "show information on all disjuncts, not just imperfect ones")
+	flagVerbose  = flag.Bool("v", false, "print more info")
+	flagExpr     = flag.String("e", "", "expression to print info on")
+	flagContinue = flag.Bool("continue-on-error", false, "continue on error")
 )
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: discrim [-p package] [-a] [<expr>]\n")
+		fmt.Fprintf(os.Stderr, "usage: discrim [-a] [-e expr] [package...]\n")
 		fmt.Fprintf(os.Stderr, `
-By default print the decision tree for discriminating between arms
-of the disjunction expression, which is evaluated in the context
-of the given package if provided.
+By default, discrim searches for and prints information on discriminators
+that are not "perfect" in the named packages.
 
-If the -a flag is provided, then the package is walked to find all disjunctions.
-By default any disjunction that does not have a good discriminator is printed;
-the -v flag causes all decision trees to be printed.
+If an expression is provided with -e, the discriminator for just that
+expression will be printed, evaluated in the context of the specified
+package specified.
 `)
 		os.Exit(2)
 	}
 	flag.Parse()
-	if flag.NArg() > 1 {
-		flag.Usage()
-	}
-	if *flagDebug {
-		cuediscrim.LogTo(os.Stderr)
-	}
 	ctx := cuecontext.New()
+
 	var expr ast.Expr
-	if flag.NArg() > 0 {
+	if *flagExpr != "" {
 		var err error
-		expr, err = parser.ParseExpr("expression", flag.Arg(0))
+		expr, err = parser.ParseExpr("expression", *flagExpr)
 		if err != nil {
 			log.Fatalf("cannot parse expression: %v", err)
 		}
 	}
 
-	scope := ctx.CompileString("_")
-	if *flagAll && *flagPackage == "" {
-		*flagPackage = "."
+	insts := load.Instances(flag.Args(), nil)
+	if len(insts) != 1 && expr != nil {
+		log.Fatalf("-e requires exactly one package to be specifed")
 	}
-	if p := *flagPackage; p != "" {
-		insts := load.Instances([]string{p}, nil)
-		vs, err := ctx.BuildInstances(insts)
-		if err != nil {
-			log.Fatalf("cannot build instances: %v", errors.Details(err, nil))
+	if expr != nil {
+		scope := ctx.BuildInstance(insts[0])
+		if err := scope.Err(); err != nil {
+			log.Fatalf("cannot build instance: %v", errors.Details(err, nil))
 		}
-		scope = vs[0]
-	}
-	if *flagAll {
-		if expr != nil {
-			flag.Usage()
+		var opts []cuediscrim.Option
+		if *flagVerbose {
+			opts = append(opts, cuediscrim.LogTo(os.Stderr))
 		}
-		walkFields(scope)
+		v := ctx.BuildExpr(expr, cue.Scope(scope), cue.InferBuiltins(true))
+		if err := v.Err(); err != nil {
+			log.Fatalf("cannot build expression: %v", err)
+		}
+		arms := cuediscrim.Disjunctions(v)
+		if *flagVerbose {
+			printArms(arms)
+		}
+		d := cuediscrim.Discriminate(arms, opts...)
+		if !isPerfect(d) {
+			fmt.Printf("discriminator is imperfect\n")
+		}
+		fmt.Print(cuediscrim.NodeString(d))
 		return
 	}
-	if expr == nil {
-		flag.Usage()
-	}
-	v := ctx.BuildExpr(expr, cue.Scope(scope), cue.InferBuiltins(true))
-	arms := cuediscrim.Disjunctions(v)
-	if *flagDebug {
-		for i, arm := range arms {
-			fmt.Fprintf(os.Stderr, "%d: %v: %v\n", i, arm.Pos(), arm)
+	for _, inst := range insts {
+		pkg := ctx.BuildInstance(inst)
+		if err := pkg.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "cannot build instance: %v\n", err)
+			if !*flagContinue {
+				os.Exit(1)
+			}
+			continue
 		}
+		new(walker).walkFields(pkg)
 	}
-	fmt.Print(cuediscrim.NodeString(cuediscrim.Discriminate(arms)))
 }
 
-func walkFields(v cue.Value) {
+type walker struct {
+	printed bool
+}
+
+func (w *walker) walkFields(v cue.Value) {
 	if v.IncompleteKind() != cue.StructKind {
 		return
 	}
@@ -97,15 +104,32 @@ func walkFields(v cue.Value) {
 	for iter.Next() {
 		v := iter.Value()
 		if isDisjunction(v) {
-			n := cuediscrim.Discriminate(cuediscrim.Disjunctions(v))
-			if *flagVerbose || !isPerfect(n) {
+			arms := cuediscrim.Disjunctions(v)
+			n := cuediscrim.Discriminate(arms)
+			if *flagAll || !isPerfect(n) {
+				if w.printed {
+					fmt.Printf("\n")
+				}
+				w.printed = true
 				fmt.Printf("%v: %v\n", v.Pos(), v.Path())
+				if *flagVerbose {
+					printArms(arms)
+					// Run again so that we get the debug info.
+					// TODO avoid duplicatin the work when *flagAll is specified
+					// so we know we're printing debug info in advance.
+					n = cuediscrim.Discriminate(arms, cuediscrim.LogTo(os.Stdout))
+				}
 				fmt.Print(cuediscrim.NodeString(n))
-				fmt.Println("")
 			}
 
 		}
-		walkFields(v)
+		w.walkFields(v)
+	}
+}
+
+func printArms(arms []cue.Value) {
+	for i, arm := range arms {
+		fmt.Printf("%d: %v: %v\n", i, arm.Pos(), arm)
 	}
 }
 
@@ -134,7 +158,7 @@ func isPerfect(n cuediscrim.DecisionNode) bool {
 	case nil:
 		return true
 	case *cuediscrim.LeafNode:
-		return len(n.Arms) <= 1
+		return n.Arms.Len() <= 1
 	case *cuediscrim.KindSwitchNode:
 		for _, n := range n.Branches {
 			if !isPerfect(n) {

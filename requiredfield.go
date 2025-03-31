@@ -10,7 +10,7 @@ import (
 // in the selected elements of values, in breadth-first order with non-structs produced earlier
 // than structs.
 // This includes the root values, which are also "required" at the root path.
-func allRequiredFields(values []cue.Value, selected intSet) iter.Seq2[string, []cue.Value] {
+func allRequiredFields(values []cue.Value, selected Set[int]) iter.Seq2[string, []cue.Value] {
 	return func(yield func(string, []cue.Value) bool) {
 		var q queue[pathValues]
 		q.push(pathValues{
@@ -28,7 +28,7 @@ func allRequiredFields(values []cue.Value, selected intSet) iter.Seq2[string, []
 			var orderedNames []string
 			byName := make(map[string]int)
 			for i, v := range x.values {
-				if !selected[i] {
+				if !selected.Has(i) {
 					continue
 				}
 				for name, v := range requiredFields(v) {

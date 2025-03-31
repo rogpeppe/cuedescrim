@@ -11,8 +11,6 @@ import (
 	"cuelang.org/go/cue"
 )
 
-type intSet = set[int]
-
 // valueSetForValue returns a discrimination set for the value v.
 func valueSetForValue(v cue.Value) valueSet {
 	if v.IncompleteKind() == cue.NullKind {
@@ -23,9 +21,9 @@ func valueSetForValue(v cue.Value) valueSet {
 			types: cue.NullKind,
 		}
 	}
-	if s := atomForValue(v); s != "" {
+	if s := atomForValue(v); s.isValid() {
 		return valueSet{
-			consts: set[atom]{s: true},
+			consts: mapSet[Atom]{s: true},
 		}
 	}
 	op, args := v.Expr()
@@ -66,7 +64,7 @@ type valueSet struct {
 	types cue.Kind
 	// consts holds the set of possible const expressions that the value can take.
 	// If a member is also a member of Types, it's redundant.
-	consts set[atom]
+	consts mapSet[Atom]
 }
 
 func (s valueSet) String() string {
@@ -83,8 +81,8 @@ func (s valueSet) String() string {
 			add(k.String())
 		}
 	}
-	for _, c := range slices.Sorted(maps.Keys(s.consts)) {
-		add(string(c))
+	for _, c := range slices.SortedFunc(maps.Keys(s.consts), Atom.compare) {
+		add(c.String())
 	}
 	buf.WriteString(")")
 	return buf.String()
@@ -101,7 +99,7 @@ func (s0 valueSet) intersect(s1 valueSet) valueSet {
 
 	s2 := valueSet{
 		types:  s0.types & s1.types,
-		consts: make(set[atom]),
+		consts: make(mapSet[Atom]),
 	}
 	for c := range s1.consts {
 		if (s0.types & c.kind()) != 0 {
@@ -121,7 +119,7 @@ func (s0 valueSet) intersect(s1 valueSet) valueSet {
 	return s2.normalize()
 }
 
-func (s0 valueSet) holdsAtom(v atom) bool {
+func (s0 valueSet) holdsAtom(v Atom) bool {
 	if (s0.types & v.kind()) != 0 {
 		return true
 	}
@@ -174,67 +172,6 @@ func (s valueSet) normalize() valueSet {
 	return s
 }
 
-type set[T comparable] map[T]bool
-
-func setString[T cmp.Ordered](s set[T]) string {
-	var buf strings.Builder
-	buf.WriteString("{")
-	first := true
-	for _, x := range slices.Sorted(maps.Keys(s)) {
-		if !first {
-			buf.WriteString(", ")
-		}
-		fmt.Fprintf(&buf, "%#v", x)
-		first = false
-	}
-	buf.WriteString("}")
-	return buf.String()
-}
-
-func (m0 set[T]) union(m1 set[T]) set[T] {
-	if len(m0) == 0 {
-		return m1
-	}
-	if len(m1) == 0 {
-		return m0
-	}
-	m2 := maps.Clone(m0)
-	maps.Copy(m2, m1)
-	return m2
-}
-
-func (m0 set[T]) Equal(m1 set[T]) bool {
-	return maps.Equal(m0, m1)
-}
-
-func (m0 set[T]) intersect(m1 set[T]) set[T] {
-	if len(m0) == 0 {
-		return m0
-	}
-	if len(m1) == 0 {
-		return m1
-	}
-	var m2 map[T]bool
-	getm := copyMap(&m2)
-	for x := range m0 {
-		if m1[x] {
-			getm()[x] = true
-		}
-	}
-	return m2
-}
-
-func (m0 set[T]) without(m1 set[T]) set[T] {
-	if len(m1) == 0 {
-		return m0
-	}
-	m2 := maps.Clone(m0)
-	for x := range m1 {
-		delete(m2, x)
-	}
-	return m2
-}
-
 func copyMap[Map ~map[K]V, K comparable, V any](m *Map) func() Map {
 	written := false
 	return func() Map {
@@ -251,18 +188,34 @@ func copyMap[Map ~map[K]V, K comparable, V any](m *Map) func() Map {
 	}
 }
 
-type atom string
+// Atom represents a concrete CUE value that can
+// be compared.
+type Atom struct {
+	cue string
+}
 
-func (s atom) kind() cue.Kind {
-	if s == "" {
+func (a Atom) String() string {
+	return a.cue
+}
+
+func (a Atom) isValid() bool {
+	return a.cue != ""
+}
+
+func (a Atom) compare(a1 Atom) int {
+	return cmp.Compare(a.cue, a1.cue)
+}
+
+func (s Atom) kind() cue.Kind {
+	if !s.isValid() {
 		return 0
 	}
-	switch s[0] {
+	switch s.cue[0] {
 	case '"':
 		return cue.StringKind
 	case '\'':
 		return cue.BytesKind
-	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '.':
+	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.':
 		return cue.NumberKind
 	case 'n':
 		return cue.NullKind
@@ -272,15 +225,15 @@ func (s atom) kind() cue.Kind {
 	panic(fmt.Errorf("unknown kind for atom %q", s))
 }
 
-func atomForValue(v cue.Value) atom {
+func atomForValue(v cue.Value) Atom {
 	if !isAtomKind(v.IncompleteKind()) || v.Validate(cue.Concrete(true)) != nil {
-		return ""
+		return Atom{}
 	}
 	// TODO it's probably not guaranteed that the value is actually canonical.
 	// For example, a string might be represented differently depending
 	// on its representation in the original source. We should make
 	// sure it's canonical.
-	return atom(fmt.Sprint(v))
+	return Atom{fmt.Sprint(v)}
 }
 
 func isAtomKind(k cue.Kind) bool {

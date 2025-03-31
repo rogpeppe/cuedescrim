@@ -14,12 +14,14 @@ import (
 // DecisionNode is the interface for all discriminators (internal nodes) and leaf nodes.
 type DecisionNode interface {
 	// Possible returns the set of arms that this decision node can match.
-	Possible() intSet
+	Possible() IntSet
 	// Check returns the chosen arms for the given value.
-	Check(v cue.Value) intSet
+	Check(v cue.Value) IntSet
 	write(w *indentWriter)
 }
 
+// NodeString returns a string representation of a node,
+// showing pseudo-code about the decisions that can be taken.
 func NodeString(n DecisionNode) string {
 	if n == nil {
 		return "<nil>"
@@ -38,18 +40,18 @@ type LeafNode struct {
 	// are selected when this leaf is reached.
 	// If fully discriminated, it’s usually 1 index.
 	// If multiple arms remain indistinguishable, they’re all listed here.
-	Arms intSet
+	Arms IntSet
 }
 
 func (l *LeafNode) write(w *indentWriter) {
 	w.Printf("choose(%v)", setString(l.Arms))
 }
 
-func (l *LeafNode) Check(v cue.Value) intSet {
+func (l *LeafNode) Check(v cue.Value) IntSet {
 	return l.Arms
 }
 
-func (l *LeafNode) Possible() intSet {
+func (l *LeafNode) Possible() IntSet {
 	return l.Arms
 }
 
@@ -59,16 +61,16 @@ type KindSwitchNode struct {
 	Branches map[cue.Kind]DecisionNode
 }
 
-func (n *KindSwitchNode) Possible() intSet {
-	return fold(iterMap(maps.Values(n.Branches), DecisionNode.Possible), intSet.union)
+func (n *KindSwitchNode) Possible() IntSet {
+	return fold(iterMap(maps.Values(n.Branches), DecisionNode.Possible), union[int])
 }
 
-func (n *KindSwitchNode) Check(v cue.Value) intSet {
+func (n *KindSwitchNode) Check(v cue.Value) IntSet {
 	f := lookupPath(v, n.Path)
 	if sub, ok := n.Branches[f.Kind()]; ok {
 		return sub.Check(v)
 	}
-	return nil
+	return wordSet(0)
 }
 
 func (k *KindSwitchNode) write(w *indentWriter) {
@@ -89,20 +91,20 @@ func (k *KindSwitchNode) write(w *indentWriter) {
 type FieldAbsenceNode struct {
 	// Branches maps paths to the set of arms selected
 	// if the field at that path is known not to exist.
-	Branches map[string]intSet
+	Branches map[string]IntSet
 }
 
-func (n *FieldAbsenceNode) Possible() intSet {
-	var s intSet
+func (n *FieldAbsenceNode) Possible() IntSet {
+	s := make(mapSet[int])
 	for _, s1 := range n.Branches {
-		s = s.union(s1)
+		s.addSeq(s1.Values())
 	}
 	return s
 }
 
-func (n *FieldAbsenceNode) Check(v cue.Value) intSet {
+func (n *FieldAbsenceNode) Check(v cue.Value) IntSet {
 	first := true
-	var s intSet
+	var s IntSet = wordSet(0)
 	for path, group := range n.Branches {
 		if lookupPath(v, path).Exists() {
 			continue
@@ -111,7 +113,7 @@ func (n *FieldAbsenceNode) Check(v cue.Value) intSet {
 			s = group
 			first = false
 		} else {
-			s = s.intersect(group)
+			s = intersect(s, group)
 		}
 	}
 	if first {
@@ -135,15 +137,15 @@ func (n *FieldAbsenceNode) write(w *indentWriter) {
 // ValueSwitchNode tests for specific enumerated (atomic) values in a field.
 type ValueSwitchNode struct {
 	Path     string
-	Branches map[atom]DecisionNode // possible concrete values -> sub-node
+	Branches map[Atom]DecisionNode // possible concrete values -> sub-node
 	Default  DecisionNode
 }
 
-func (n *ValueSwitchNode) Possible() intSet {
-	return fold(iterMap(maps.Values(n.Branches), DecisionNode.Possible), intSet.union)
+func (n *ValueSwitchNode) Possible() IntSet {
+	return fold(iterMap(maps.Values(n.Branches), DecisionNode.Possible), union[int])
 }
 
-func (n *ValueSwitchNode) Check(v cue.Value) intSet {
+func (n *ValueSwitchNode) Check(v cue.Value) IntSet {
 	f := lookupPath(v, n.Path)
 	if f.Exists() && isAtomKind(f.Kind()) {
 		if sub, ok := n.Branches[atomForValue(f)]; ok {
@@ -153,12 +155,12 @@ func (n *ValueSwitchNode) Check(v cue.Value) intSet {
 	if n.Default != nil {
 		return n.Default.Check(v)
 	}
-	return nil
+	return wordSet(0)
 }
 
 func (n *ValueSwitchNode) write(w *indentWriter) {
 	w.Printf("switch %s {", n.Path)
-	for _, val := range slices.Sorted(maps.Keys(n.Branches)) {
+	for _, val := range slices.SortedFunc(maps.Keys(n.Branches), Atom.compare) {
 		node := n.Branches[val]
 		w.Printf("case %v:", val)
 		w.Indent()
@@ -172,14 +174,17 @@ func (n *ValueSwitchNode) write(w *indentWriter) {
 	w.Printf("}")
 }
 
+// IntSet is used to hold a set of possible discrimination choices.
+type IntSet = Set[int]
+
 type ErrorNode struct{}
 
-func (ErrorNode) Possible() intSet {
+func (ErrorNode) Possible() IntSet {
 	return nil
 }
 
-func (ErrorNode) Check(v cue.Value) intSet {
-	return nil
+func (ErrorNode) Check(v cue.Value) IntSet {
+	return wordSet(0)
 }
 
 func (ErrorNode) write(w *indentWriter) {

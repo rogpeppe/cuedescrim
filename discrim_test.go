@@ -2,6 +2,7 @@ package cuediscrim
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 type dataTest struct {
 	name string
 	cue  string
-	want intSet
+	want IntSet
 }
 
 var buildDecisionTreeTests = []struct {
@@ -42,7 +43,7 @@ case string:
 	}, {
 		name: "error",
 		cue:  `true`,
-		want: nil,
+		want: setOf(),
 	}},
 }, {
 	testName: "SimpleValues",
@@ -74,6 +75,7 @@ default:
 	}, {
 		name: "other",
 		cue:  `{}`,
+		want: setOf(),
 	}},
 }, {
 	testName: "ValuesAndTypes",
@@ -116,6 +118,7 @@ default:
 	}, {
 		name: "other",
 		cue:  `1.2`,
+		want: setOf(),
 	}},
 }, {
 	testName: "TwoStructs",
@@ -148,6 +151,7 @@ default:
 	}, {
 		name: "withOther",
 		cue:  `{type: "other"}`,
+		want: setOf(),
 	}},
 }, {
 	testName: "StructsWithNestedDiscriminator",
@@ -180,6 +184,7 @@ default:
 	}, {
 		name: "withOther",
 		cue:  `{type: "other"}`,
+		want: setOf(),
 	}},
 }, {
 	testName: "StructsWithSeveralPotentialDiscriminators",
@@ -300,8 +305,9 @@ allOf {
 }}
 
 func TestBuildDecisionTree(t *testing.T) {
+	var opts []Option
 	if testing.Verbose() {
-		LogTo(os.Stderr)
+		opts = append(opts, LogTo(os.Stderr))
 	}
 	for _, test := range buildDecisionTreeTests {
 		t.Run(test.testName, func(t *testing.T) {
@@ -311,18 +317,22 @@ func TestBuildDecisionTree(t *testing.T) {
 
 			arms := Disjunctions(val)
 			t.Logf("arms: %v", arms)
-			tree := Discriminate(arms)
+			tree := Discriminate(arms, opts...)
 			qt.Assert(t, qt.Equals(NodeString(tree), strings.TrimPrefix(test.want, "\n")))
 
 			for _, dtest := range test.data {
 				t.Run(dtest.name, func(t *testing.T) {
 					data := ctx.CompileString(dtest.cue)
 					got := tree.Check(data)
-					qt.Assert(t, qt.DeepEquals(got, dtest.want))
+					qt.Assert(t, deepEquals(ref(got), ref(dtest.want)))
 				})
 			}
 		})
 	}
+}
+
+func ref[T any](x T) *T {
+	return &x
 }
 
 func TestIndentWriter(t *testing.T) {
@@ -352,13 +362,6 @@ hello {
 `[1:]))
 }
 
-func setOf[T comparable](xs ...T) set[T] {
-	if len(xs) == 0 {
-		return nil
-	}
-	s := make(set[T])
-	for _, x := range xs {
-		s[x] = true
-	}
-	return s
+func setOf(xs ...int) mapSet[int] {
+	return mapSetOf(slices.Values(xs))
 }
