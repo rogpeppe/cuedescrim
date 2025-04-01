@@ -17,10 +17,11 @@ type dataTest struct {
 }
 
 var buildDecisionTreeTests = []struct {
-	testName string
-	cue      string
-	want     string
-	data     []dataTest
+	testName    string
+	cue         string
+	want        string
+	wantPerfect bool
+	data        []dataTest
 }{{
 	testName: "SimpleKinds",
 	cue:      `string | int`,
@@ -32,6 +33,7 @@ case string:
 	choose({0})
 }
 `,
+	wantPerfect: true,
 	data: []dataTest{{
 		name: "int",
 		cue:  "123",
@@ -60,6 +62,7 @@ default:
 	error
 }
 `,
+	wantPerfect: true,
 	data: []dataTest{{
 		name: "bar",
 		cue:  `"bar"`,
@@ -99,6 +102,7 @@ default:
 	}
 }
 `,
+	wantPerfect: true,
 	data: []dataTest{{
 		name: "bar",
 		cue:  `"bar"`,
@@ -140,6 +144,7 @@ default:
 	error
 }
 `,
+	wantPerfect: true,
 	data: []dataTest{{
 		name: "withFoo",
 		cue:  `{type: "foo", a: 3}`,
@@ -163,6 +168,7 @@ default:
 	discrim!: kind!: "bar"
 	b?: bool
 }`,
+	wantPerfect: true,
 	want: `
 switch discrim.kind {
 case "bar":
@@ -206,6 +212,7 @@ case string:
 	choose({0})
 }
 `,
+	wantPerfect: true,
 }, {
 	testName: "StructsWithOtherTypes",
 	cue: `
@@ -233,6 +240,7 @@ case struct:
 	}
 }
 `,
+	wantPerfect: true,
 }, {
 	testName: "PairwiseDiscriminator",
 	cue: `
@@ -252,11 +260,19 @@ case struct:
 `,
 	want: `
 choose({0, 1, 2})
-`}, {
+`,
+	wantPerfect: false,
+}, {
 	testName: "MatchN",
-	cue:      `matchN(1, [true, false])`,
+	cue:      `matchN(1, [true, false, matchN(1, ["foo", "bar" | "baz"])])`,
 	want: `
 switch . {
+case "bar":
+	choose({3})
+case "baz":
+	choose({4})
+case "foo":
+	choose({2})
 case false:
 	choose({1})
 case true:
@@ -265,6 +281,7 @@ default:
 	error
 }
 `,
+	wantPerfect: true,
 }, {
 	testName: "MultipleDisjointStructs",
 	cue: `
@@ -277,6 +294,7 @@ allOf {
 	notPresent(c) -> {0, 1}
 }
 `,
+	wantPerfect: false,
 	data: []dataTest{{
 		name: "hasA",
 		cue:  `{a: 5}`,
@@ -317,8 +335,9 @@ func TestBuildDecisionTree(t *testing.T) {
 
 			arms := Disjunctions(val)
 			t.Logf("arms: %v", arms)
-			tree := Discriminate(arms, opts...)
+			tree, isPerfect := Discriminate(arms, opts...)
 			qt.Assert(t, qt.Equals(NodeString(tree), strings.TrimPrefix(test.want, "\n")))
+			qt.Check(t, qt.Equals(isPerfect, test.wantPerfect))
 
 			for _, dtest := range test.data {
 				t.Run(dtest.name, func(t *testing.T) {

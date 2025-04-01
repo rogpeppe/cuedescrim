@@ -3,7 +3,6 @@ package cuediscrim
 import (
 	"cmp"
 	"fmt"
-	"iter"
 	"maps"
 	"slices"
 	"strings"
@@ -248,28 +247,4 @@ func isAtomKind(k cue.Kind) bool {
 		return true
 	}
 	return false
-}
-
-func fold[T any](it iter.Seq[T], op func(T, T) T) T {
-	first := true
-	var tot T
-	for x := range it {
-		if first {
-			tot = x
-			first = false
-		} else {
-			tot = op(tot, x)
-		}
-	}
-	return tot
-}
-
-func iterMap[T1, T2 any](it iter.Seq[T1], f func(T1) T2) iter.Seq[T2] {
-	return func(yield func(T2) bool) {
-		for t := range it {
-			if !yield(f(t)) {
-				return
-			}
-		}
-	}
 }

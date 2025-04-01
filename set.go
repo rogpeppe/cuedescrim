@@ -30,6 +30,9 @@ type Set[T comparable] interface {
 	Len() int
 }
 
+// IntSet is used to hold a set of possible discrimination choices.
+type IntSet = Set[int]
+
 func union[T comparable](s1, s2 Set[T]) Set[T] {
 	if s1.Len() == 0 {
 		return s2
@@ -64,6 +67,22 @@ func intersect[T comparable](s0, s1 Set[T]) Set[T] {
 	return s2
 }
 
+type singleInt int
+
+func (i singleInt) Values() iter.Seq[int] {
+	return func(yield func(int) bool) {
+		yield(int(i))
+	}
+}
+
+func (i singleInt) Has(x int) bool {
+	return int(i) == x
+}
+
+func (i singleInt) Len() int {
+	return 1
+}
+
 func setString[T cmp.Ordered](s Set[T]) string {
 	var buf strings.Builder
 	buf.WriteString("{")
@@ -77,4 +96,48 @@ func setString[T cmp.Ordered](s Set[T]) string {
 	}
 	buf.WriteString("}")
 	return buf.String()
+}
+
+func revSet[T comparable](s Set[T], rev func(T) Set[T]) Set[T] {
+	if rev == nil {
+		return s
+	}
+	return &revSetImpl[T]{
+		orig: s,
+		rev:  rev,
+	}
+}
+
+type revSetImpl[T comparable] struct {
+	orig Set[T]
+	new  mapSet[T]
+	rev  func(T) Set[T]
+}
+
+func (s *revSetImpl[T]) Values() iter.Seq[T] {
+	return func(yield func(T) bool) {
+		for x := range s.orig.Values() {
+			for y := range s.rev(x).Values() {
+				if !yield(y) {
+					return
+				}
+			}
+		}
+	}
+}
+
+func (s *revSetImpl[T]) Has(x T) bool {
+	s.init()
+	return s.new.Has(x)
+}
+
+func (s *revSetImpl[T]) Len() int {
+	s.init()
+	return len(s.new)
+}
+
+func (s *revSetImpl[T]) init() {
+	if s.new == nil {
+		s.new = mapSetOf(s.orig.Values())
+	}
 }

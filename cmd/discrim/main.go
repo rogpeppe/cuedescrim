@@ -16,10 +16,11 @@ import (
 )
 
 var (
-	flagAll      = flag.Bool("a", false, "show information on all disjuncts, not just imperfect ones")
-	flagVerbose  = flag.Bool("v", false, "print more info")
-	flagExpr     = flag.String("e", "", "expression to print info on")
-	flagContinue = flag.Bool("continue-on-error", false, "continue on error")
+	flagAll        = flag.Bool("a", false, "show information on all disjuncts, not just imperfect ones")
+	flagVerbose    = flag.Bool("v", false, "print more info")
+	flagExpr       = flag.String("e", "", "expression to print info on")
+	flagContinue   = flag.Bool("continue-on-error", false, "continue on error")
+	flagMergeAtoms = flag.Bool("merge-atoms", false, "do not try to discriminate between atomic types")
 )
 
 func main() {
@@ -53,7 +54,9 @@ package specified.
 	}
 	if expr != nil {
 		scope := ctx.BuildInstance(insts[0]) // Ignore error.
-		var opts []cuediscrim.Option
+		opts := []cuediscrim.Option{
+			cuediscrim.MergeAtoms(*flagMergeAtoms),
+		}
 		if *flagVerbose {
 			opts = append(opts, cuediscrim.LogTo(os.Stderr))
 		}
@@ -65,8 +68,8 @@ package specified.
 		if *flagVerbose {
 			printArms(arms)
 		}
-		d := cuediscrim.Discriminate(arms, opts...)
-		if !isPerfect(d) {
+		d, isPerfect := cuediscrim.Discriminate(arms, opts...)
+		if !isPerfect {
 			fmt.Printf("discriminator is imperfect\n")
 		}
 		fmt.Print(cuediscrim.NodeString(d))
@@ -101,8 +104,8 @@ func (w *walker) walkFields(v cue.Value) {
 		v := iter.Value()
 		if isDisjunction(v) {
 			arms := cuediscrim.Disjunctions(v)
-			n := cuediscrim.Discriminate(arms)
-			if *flagAll || !isPerfect(n) {
+			n, isPerfect := cuediscrim.Discriminate(arms, cuediscrim.MergeAtoms(*flagMergeAtoms))
+			if *flagAll || !isPerfect {
 				if w.printed {
 					fmt.Printf("\n")
 				}
@@ -113,7 +116,10 @@ func (w *walker) walkFields(v cue.Value) {
 					// Run again so that we get the debug info.
 					// TODO avoid duplicatin the work when *flagAll is specified
 					// so we know we're printing debug info in advance.
-					n = cuediscrim.Discriminate(arms, cuediscrim.LogTo(os.Stdout))
+					n, _ = cuediscrim.Discriminate(arms,
+						cuediscrim.LogTo(os.Stdout),
+						cuediscrim.MergeAtoms(*flagMergeAtoms),
+					)
 				}
 				fmt.Print(cuediscrim.NodeString(n))
 			}
@@ -144,35 +150,4 @@ func isDisjunction(v cue.Value) bool {
 		return true
 	}
 	return false
-}
-
-// isPerfect reports whether n is a "perfect" discriminator,
-// in that any given value must result in a single arm chosen
-// or an error.
-func isPerfect(n cuediscrim.DecisionNode) bool {
-	switch n := n.(type) {
-	case nil:
-		return true
-	case *cuediscrim.LeafNode:
-		return n.Arms.Len() <= 1
-	case *cuediscrim.KindSwitchNode:
-		for _, n := range n.Branches {
-			if !isPerfect(n) {
-				return false
-			}
-		}
-		return true
-	case *cuediscrim.FieldAbsenceNode:
-		return false
-	case *cuediscrim.ValueSwitchNode:
-		for _, n := range n.Branches {
-			if !isPerfect(n) {
-				return false
-			}
-		}
-		return isPerfect(n.Default)
-	case *cuediscrim.ErrorNode, cuediscrim.ErrorNode:
-		return true
-	}
-	panic(fmt.Errorf("unexpected node type %#v", n))
 }

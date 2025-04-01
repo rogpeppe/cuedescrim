@@ -174,8 +174,57 @@ func (n *ValueSwitchNode) write(w *indentWriter) {
 	w.Printf("}")
 }
 
-// IntSet is used to hold a set of possible discrimination choices.
-type IntSet = Set[int]
+// isPerfect reports whether n is a "perfect" discriminator,
+// in that any given value must result in a single arm chosen
+// or an error.
+// If noAtoms is true, it's still considered "perfect" if all the chosen
+// arms are of the same atom type (it uses arms to determine that)
+func isPerfect(n DecisionNode, noAtoms bool, arms []cue.Value) bool {
+	switch n := n.(type) {
+	case nil:
+		return true
+	case *LeafNode:
+		if n.Arms.Len() <= 1 {
+			return true
+		}
+		if !noAtoms {
+			return false
+		}
+		var k cue.Kind
+		for i := range n.Arms.Values() {
+			v := arms[i]
+			vk := v.Kind()
+			if !isAtomKind(vk) {
+				return false
+			}
+			if k != 0 && k != vk {
+				return false
+			}
+			k = vk
+		}
+		// If all the arms have the same atom kind: we're still OK.
+		return true
+	case *KindSwitchNode:
+		for _, n := range n.Branches {
+			if !isPerfect(n, noAtoms, arms) {
+				return false
+			}
+		}
+		return true
+	case *FieldAbsenceNode:
+		return false
+	case *ValueSwitchNode:
+		for _, n := range n.Branches {
+			if !isPerfect(n, noAtoms, arms) {
+				return false
+			}
+		}
+		return isPerfect(n.Default, noAtoms, arms)
+	case *ErrorNode, ErrorNode:
+		return true
+	}
+	panic(fmt.Errorf("unexpected node type %#v", n))
+}
 
 type ErrorNode struct{}
 

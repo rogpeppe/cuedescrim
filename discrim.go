@@ -9,7 +9,8 @@ import (
 )
 
 type options struct {
-	logger *indentWriter
+	logger     *indentWriter
+	mergeAtoms bool
 }
 
 // LogTo causes debug information to be written to w.
@@ -21,42 +22,56 @@ func LogTo(w io.Writer) Option {
 	}
 }
 
+func MergeAtoms(enable bool) Option {
+	return func(opts *options) {
+		opts.mergeAtoms = enable
+	}
+}
+
 type Option func(*options)
 
 // Discriminate returns a decision tree that can be used
 // to decide between the given values, assuming they're
 // all arms of a disjunction. See [Disjunctions] for a way
 // to split a value into its component disjunctions recursively.
-func Discriminate(arms []cue.Value, optArgs ...Option) DecisionNode {
+//
+// It also reports whether the discriminator is "perfect"
+// for discriminating between the arms. That decision
+// is influenced by the MergeAtoms and MergeCompatibleStructs
+// options.
+func Discriminate(arms []cue.Value, optArgs ...Option) (DecisionNode, bool) {
 	var opts options
 	for _, f := range optArgs {
 		f(&opts)
 	}
+	origArms := arms
+	var rev func(int) IntSet
+	if opts.mergeAtoms {
+		arms, rev = mergeAtoms(arms)
+	}
+	var n DecisionNode
 	if len(arms) <= 64 {
 		d := &discriminator[wordSet]{
 			options: opts,
 			sets:    wordSetAPI{},
+			rev:     rev,
 		}
-		return d.discriminate(arms, wordSetN(len(arms)))
+		n = d.discriminate(arms, wordSetN(len(arms)))
+	} else {
+		d := &discriminator[mapSet[int]]{
+			options: opts,
+			sets:    mapSetAPI[int]{},
+			rev:     rev,
+		}
+		n = d.discriminate(arms, intSetN(len(arms)))
 	}
-	d := &discriminator[mapSet[int]]{
-		options: opts,
-		sets:    mapSetAPI[int]{},
-	}
-	m := make(mapSet[int])
-	for i := range len(arms) {
-		m[i] = true
-	}
-	return d.discriminate(arms, m)
+	return n, isPerfect(n, opts.mergeAtoms, origArms)
 }
 
 type discriminator[Set any] struct {
 	sets setAPI[Set, int]
+	rev  func(int) IntSet
 	options
-}
-
-func (d *discriminator[Set]) setString(s Set) string {
-	return setString(d.sets.asSet(s))
 }
 
 func (d *discriminator[Set]) discriminate(arms []cue.Value, selected Set) (_n DecisionNode) {
@@ -68,9 +83,7 @@ func (d *discriminator[Set]) discriminate(arms []cue.Value, selected Set) (_n De
 	defer d.logger.Unindent()
 	if d.sets.len(selected) <= 1 {
 		// Nothing to disambiguate.
-		return &LeafNode{
-			Arms: d.sets.asSet(selected),
-		}
+		return d.newLeaf(selected)
 	}
 	// First try to discriminate based on the top level value only.
 	// We're happy just to make some progress, so we'll consider
@@ -150,9 +163,7 @@ func (d *discriminator[Set]) discriminate(arms []cue.Value, selected Set) (_n De
 	if d.sets.len(possible) > 0 {
 		// We haven't been able to form a discriminator.
 		// TODO better than this.
-		return &LeafNode{
-			Arms: d.sets.asSet(selected),
-		}
+		return d.newLeaf(selected)
 	}
 	return &FieldAbsenceNode{
 		Branches: branches,
@@ -179,9 +190,7 @@ func (d *discriminator[Set]) buildDecisionFromDescriminators(path string, values
 			case d.sets.equal(group, selected):
 				// We've got nothing more to base a decision on,
 				// so terminate.
-				branch = &LeafNode{
-					Arms: d.sets.asSet(selected),
-				}
+				branch = d.newLeaf(selected)
 			default:
 				branch = d.discriminate(values, group)
 			}
@@ -202,9 +211,7 @@ func (d *discriminator[Set]) buildDecisionFromDescriminators(path string, values
 		if d.sets.equal(group, selected) {
 			// We've got nothing more to base a decision on,
 			// so terminate.
-			branch = &LeafNode{
-				Arms: d.sets.asSet(selected),
-			}
+			branch = d.newLeaf(selected)
 		} else {
 			d.logger.Printf("valSwitch %v", val)
 			branch = d.discriminate(values, group)
@@ -351,19 +358,16 @@ func (d *discriminator[Set]) fullyDiscriminated(it iter.Seq[Set], selected Set) 
 	return d.sets.len(found) == d.sets.len(selected)
 }
 
-func mapHasKey[Map ~map[K]V, K comparable, V any](m Map, k K) bool {
-	_, ok := m[k]
-	return ok
+func (d *discriminator[Set]) setString(s Set) string {
+	return setString(d.asExternalSet(s))
 }
 
-func iterConcat[T any](iters ...iter.Seq[T]) iter.Seq[T] {
-	return func(yield func(T) bool) {
-		for _, it := range iters {
-			for x := range it {
-				if !yield(x) {
-					return
-				}
-			}
-		}
+func (d *discriminator[Set]) newLeaf(s Set) DecisionNode {
+	return &LeafNode{
+		Arms: d.asExternalSet(s),
 	}
+}
+
+func (d *discriminator[Set]) asExternalSet(s Set) IntSet {
+	return revSet(d.sets.asSet(s), d.rev)
 }
