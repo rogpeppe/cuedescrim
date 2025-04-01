@@ -6,11 +6,14 @@ import (
 	"cuelang.org/go/cue"
 )
 
-// allRequiredFields returns an iterator over the paths of all the required fields
+const allLabels = cue.RequiredConstraint
+
+// allFields returns an iterator over the paths of all the required fields
 // in the selected elements of values, in breadth-first order with non-structs produced earlier
 // than structs.
 // This includes the root values, which are also "required" at the root path.
-func allRequiredFields(values []cue.Value, selected Set[int]) iter.Seq2[string, []cue.Value] {
+// It only includes string labels that have any bits set in labelTypes.
+func allFields(values []cue.Value, selected Set[int], labelTypes labelType) iter.Seq2[string, []cue.Value] {
 	return func(yield func(string, []cue.Value) bool) {
 		var q queue[pathValues]
 		q.push(pathValues{
@@ -31,7 +34,7 @@ func allRequiredFields(values []cue.Value, selected Set[int]) iter.Seq2[string, 
 				if !selected.Has(i) {
 					continue
 				}
-				for name, v := range requiredFields(v) {
+				for name, v := range structFields(v, labelTypes) {
 					var entry []cue.Value
 					if i, ok := byName[name]; ok {
 						entry = ordered[i]
@@ -88,9 +91,9 @@ type pathValues struct {
 	values []cue.Value
 }
 
-// requiredFields returns an iterator over the names of all the required fields
+// structFields returns an iterator over the names of all the required fields
 // in v and their values.
-func requiredFields(v cue.Value) iter.Seq2[string, cue.Value] {
+func structFields(v cue.Value, labelTypes labelType) iter.Seq2[string, cue.Value] {
 	return func(yield func(string, cue.Value) bool) {
 		if v.IncompleteKind() != cue.StructKind {
 			return
@@ -99,15 +102,38 @@ func requiredFields(v cue.Value) iter.Seq2[string, cue.Value] {
 		if err != nil {
 			return
 		}
-		const requiredRegular = cue.StringLabel | cue.RequiredConstraint
 		for iter.Next() {
-			if (iter.FieldType() & requiredRegular) == requiredRegular {
+			if labelTypes.match(iter.FieldType()) {
 				if !yield(iter.Selector().Unquoted(), iter.Value()) {
 					break
 				}
 			}
 		}
 	}
+}
+
+type labelType int
+
+const (
+	requiredLabel labelType = 1 << iota
+	optionalLabel
+	regularLabel
+)
+
+func (t labelType) match(selt cue.SelectorType) bool {
+	if (selt & cue.StringLabel) == 0 {
+		return false
+	}
+	var actual labelType
+	switch selt & (cue.OptionalConstraint | cue.RequiredConstraint) {
+	case 0:
+		actual = regularLabel
+	case cue.OptionalConstraint:
+		actual = optionalLabel
+	case cue.RequiredConstraint:
+		actual = requiredLabel
+	}
+	return (t & actual) != 0
 }
 
 type queue[T any] []T

@@ -104,7 +104,7 @@ func (d *discriminator[Set]) discriminate(arms []cue.Value, selected Set) (_n De
 		return d.buildDecisionFromDescriminators(".", arms, selected, byValue, byKind)
 	}
 	// First try to find a single discriminator that can be used to do all discrimination.
-	for path, values := range allRequiredFields(arms, d.sets.asSet(selected)) {
+	for path, values := range allFields(arms, d.sets.asSet(selected), requiredLabel) {
 		d.logger.Printf("----- PATH %s", path)
 		byValue, byKind, full := d.discriminators(values, selected, selected)
 		if full {
@@ -133,7 +133,7 @@ func (d *discriminator[Set]) discriminate(arms []cue.Value, selected Set) (_n De
 	// one arm at a time.
 	possible := selected
 	branches := make(map[string]IntSet)
-	for path, values := range allRequiredFields(arms, d.sets.asSet(selected)) {
+	for path, values := range allFields(arms, d.sets.asSet(selected), requiredLabel) {
 		group := d.existenceDiscriminator(values, selected)
 		d.logger.Printf("----- PATH %s %s; possible %s", path, d.setString(group), d.setString(possible))
 
