@@ -74,16 +74,36 @@ d: [_|_, bool]
 	cue: `
 >5 | null | "foo" | "bar" | {
 	type!: "t1"
-	a!: bool
+	a!: p!: int
 } | {
 	type!: "t2"
 	b!: int
+	a!: {
+		p!: x!: int
+		q!: r!: string
+	}
 }
 `,
 	want: `
 type: [_|_, _|_, _|_, _|_, "t1", "t2"]
-a: [_|_, _|_, _|_, _|_, bool, _|_]
 b: [_|_, _|_, _|_, _|_, _|_, int]
+a: [_|_, _|_, _|_, _|_, {
+	p!: int
+}, {
+	p!: {
+		x!: int
+	}
+	q!: {
+		r!: string
+	}
+}]
+a.p: [_|_, _|_, _|_, _|_, int, {
+	x!: int
+}]
+a.q: [_|_, _|_, _|_, _|_, _|_, {
+	r!: string
+}]
+a.q.r: [_|_, _|_, _|_, _|_, _|_, string]
 `,
 }, {
 	testName:   "WithOptional",

@@ -16,16 +16,16 @@ import (
 )
 
 var (
-	flagAll        = flag.Bool("a", false, "show information on all disjuncts, not just imperfect ones")
-	flagVerbose    = flag.Bool("v", false, "print more info")
-	flagExpr       = flag.String("e", "", "expression to print info on")
-	flagContinue   = flag.Bool("continue-on-error", false, "continue on error")
-	flagMergeAtoms = flag.Bool("merge-atoms", false, "do not try to discriminate between atomic types")
+	flagAll             = flag.Bool("a", false, "show information on all disjuncts, not just imperfect ones")
+	flagVerbose         = flag.Bool("v", false, "print more info")
+	flagExpr            = flag.String("e", "", "expression to print info on")
+	flagContinue        = flag.Bool("continue-on-error", false, "continue on error")
+	flagMergeCompatible = flag.Bool("m", false, "merge compatible data types before attempting discrimination")
 )
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: discrim [-a] [-e expr] [package...]\n")
+		fmt.Fprintf(os.Stderr, "usage: discrim [package...]\n")
 		fmt.Fprintf(os.Stderr, `
 By default, discrim searches for and prints information on discriminators
 that are not "perfect" in the named packages.
@@ -55,7 +55,7 @@ package specified.
 	if expr != nil {
 		scope := ctx.BuildInstance(insts[0]) // Ignore error.
 		opts := []cuediscrim.Option{
-			cuediscrim.MergeAtoms(*flagMergeAtoms),
+			cuediscrim.MergeCompatible(*flagMergeCompatible),
 		}
 		if *flagVerbose {
 			opts = append(opts, cuediscrim.LogTo(os.Stderr))
@@ -104,7 +104,7 @@ func (w *walker) walkFields(v cue.Value) {
 		v := iter.Value()
 		if isDisjunction(v) {
 			arms := cuediscrim.Disjunctions(v)
-			n, isPerfect := cuediscrim.Discriminate(arms, cuediscrim.MergeAtoms(*flagMergeAtoms))
+			n, isPerfect := cuediscrim.Discriminate(arms, cuediscrim.MergeCompatible(*flagMergeCompatible))
 			if *flagAll || !isPerfect {
 				if w.printed {
 					fmt.Printf("\n")
@@ -118,7 +118,7 @@ func (w *walker) walkFields(v cue.Value) {
 					// so we know we're printing debug info in advance.
 					n, _ = cuediscrim.Discriminate(arms,
 						cuediscrim.LogTo(os.Stdout),
-						cuediscrim.MergeAtoms(*flagMergeAtoms),
+						cuediscrim.MergeCompatible(*flagMergeCompatible),
 					)
 				}
 				fmt.Print(cuediscrim.NodeString(n))

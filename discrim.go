@@ -9,8 +9,8 @@ import (
 )
 
 type options struct {
-	logger     *indentWriter
-	mergeAtoms bool
+	logger          *indentWriter
+	mergeCompatible bool
 }
 
 // LogTo causes debug information to be written to w.
@@ -22,9 +22,9 @@ func LogTo(w io.Writer) Option {
 	}
 }
 
-func MergeAtoms(enable bool) Option {
+func MergeCompatible(enable bool) Option {
 	return func(opts *options) {
-		opts.mergeAtoms = enable
+		opts.mergeCompatible = enable
 	}
 }
 
@@ -46,8 +46,8 @@ func Discriminate(arms []cue.Value, optArgs ...Option) (DecisionNode, bool) {
 	}
 	origArms := arms
 	var rev func(int) IntSet
-	if opts.mergeAtoms {
-		arms, rev = mergeAtoms(arms)
+	if opts.mergeCompatible {
+		arms, rev = mergeCompatible(arms)
 	}
 	var n DecisionNode
 	if len(arms) <= 64 {
@@ -65,7 +65,8 @@ func Discriminate(arms []cue.Value, optArgs ...Option) (DecisionNode, bool) {
 		}
 		n = d.discriminate(arms, intSetN(len(arms)))
 	}
-	return n, isPerfect(n, opts.mergeAtoms, origArms)
+
+	return n, isPerfect(n, opts.mergeCompatible, origArms)
 }
 
 type discriminator[Set any] struct {

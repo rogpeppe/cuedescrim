@@ -6,8 +6,6 @@ import (
 	"cuelang.org/go/cue"
 )
 
-const allLabels = cue.RequiredConstraint
-
 // allFields returns an iterator over the paths of all the required fields
 // in the selected elements of values, in breadth-first order with non-structs produced earlier
 // than structs.
@@ -53,7 +51,7 @@ func allFields(values []cue.Value, selected Set[int], labelTypes labelType) iter
 			for oi := range ordered {
 				name, values := orderedNames[oi], ordered[oi]
 				for _, v := range values {
-					if v.IncompleteKind() != cue.StructKind {
+					if v.Exists() && v.IncompleteKind() != cue.StructKind {
 						if !yield(pathConcat(x.path, name), values) {
 							return
 						}
