@@ -93,7 +93,7 @@ type pathValues struct {
 // in v and their values.
 func structFields(v cue.Value, labelTypes labelType) iter.Seq2[string, cue.Value] {
 	return func(yield func(string, cue.Value) bool) {
-		if v.IncompleteKind() != cue.StructKind {
+		if !v.Exists() {
 			return
 		}
 		iter, err := v.Fields(cue.Optional(true))

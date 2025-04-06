@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"maps"
+	"math/bits"
 	"slices"
 	"strings"
 
@@ -235,16 +236,24 @@ func atomForValue(v cue.Value) Atom {
 	return Atom{fmt.Sprint(v)}
 }
 
+const atomKinds = cue.NullKind |
+	cue.BoolKind |
+	cue.IntKind |
+	cue.FloatKind |
+	cue.StringKind |
+	cue.BytesKind |
+	cue.NumberKind
+
+func allAtomsKind(k cue.Kind) bool {
+	return (k&atomKinds) != 0 && (k&^atomKinds) == 0
+}
+
 func isAtomKind(k cue.Kind) bool {
-	switch k {
-	case cue.NullKind,
-		cue.BoolKind,
-		cue.IntKind,
-		cue.FloatKind,
-		cue.StringKind,
-		cue.BytesKind,
-		cue.NumberKind:
-		return true
-	}
-	return false
+	return allAtomsKind(k) && onesCount(k) == 1
+}
+
+// This means we can use the correct OnesCount operation
+// without worrying that the underlying type of Kind might change.
+func onesCount[T ~uint16](x T) int {
+	return bits.OnesCount16(uint16(x))
 }

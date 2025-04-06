@@ -48,6 +48,53 @@ var mergeAtomsTests = []struct {
 		setOf(0),
 		setOf(1),
 	},
+}, {
+	testName: "CompatibleLists",
+	cue: `
+[string, int, ...{
+	a!: string
+}] | [string, int, ...{
+	b!: int
+}]
+`,
+	want: `[string, int, ...{
+	a!: string
+}]`,
+	rev: []Set[int]{
+		setOf(0, 1),
+	},
+}, {
+	testName: "MCP",
+	cue: `
+	({
+		id!:      int | string
+		jsonrpc!: "2.0"
+		method!:  string
+	} | {
+		jsonrpc!: "2.0"
+		method!:  string
+	} | [...] | {
+		id!:      int | string
+		jsonrpc!: "2.0"
+		result!: {}
+	}| {
+		error!: {
+			code!:    int
+			message!: string
+		}
+		id!:      int | string
+		jsonrpc!: "2.0"
+	} | [...])
+`,
+	want: `{
+	id!:      int | string
+	jsonrpc!: "2.0"
+	method!:  string
+} | [...]`,
+	rev: []Set[int]{
+		setOf(0, 1, 3, 4),
+		setOf(2),
+	},
 }}
 
 func TestMergeAtoms(t *testing.T) {
@@ -65,12 +112,12 @@ func TestMergeAtoms(t *testing.T) {
 				}),
 				" | ",
 			)
-			qt.Assert(t, qt.Equals(got, test.want))
+			qt.Check(t, qt.Equals(got, test.want))
 			rev := make([]Set[int], len(arms1))
 			for i := range arms1 {
 				rev[i] = revFunc(i)
 			}
-			qt.Assert(t, deepEquals(rev, test.rev))
+			qt.Check(t, deepEquals(rev, test.rev))
 		})
 	}
 }

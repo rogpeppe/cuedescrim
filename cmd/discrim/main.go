@@ -26,6 +26,7 @@ var (
 func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: discrim [package...]\n")
+		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, `
 By default, discrim searches for and prints information on discriminators
 that are not "perfect" in the named packages.
@@ -93,7 +94,7 @@ type walker struct {
 }
 
 func (w *walker) walkFields(v cue.Value) {
-	if v.IncompleteKind() != cue.StructKind {
+	if (v.IncompleteKind() & cue.StructKind) == 0 {
 		return
 	}
 	iter, err := v.Fields(cue.All())
@@ -102,8 +103,7 @@ func (w *walker) walkFields(v cue.Value) {
 	}
 	for iter.Next() {
 		v := iter.Value()
-		if isDisjunction(v) {
-			arms := cuediscrim.Disjunctions(v)
+		if arms := cuediscrim.Disjunctions(v); len(arms) > 1 {
 			n, isPerfect := cuediscrim.Discriminate(arms, cuediscrim.MergeCompatible(*flagMergeCompatible))
 			if *flagAll || !isPerfect {
 				if w.printed {

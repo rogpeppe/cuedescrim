@@ -47,7 +47,22 @@ func Discriminate(arms []cue.Value, optArgs ...Option) (DecisionNode, bool) {
 	origArms := arms
 	var rev func(int) IntSet
 	if opts.mergeCompatible {
-		arms, rev = mergeCompatible(arms)
+		var newArms []cue.Value
+		newArms, rev = mergeCompatible(arms)
+		if len(newArms) != len(arms) {
+			// Some items have been merged. It's useful to know
+			// that for debugging purposes.
+			opts.logger.Printf("merge groups: {")
+			opts.logger.Indent()
+			for i := range newArms {
+				opts.logger.Printf("%v", setString(rev(i)))
+			}
+			opts.logger.Unindent()
+			opts.logger.Printf("}")
+		} else {
+			opts.logger.Printf("no merging")
+		}
+		arms = newArms
 	}
 	var n DecisionNode
 	if len(arms) <= 64 {
