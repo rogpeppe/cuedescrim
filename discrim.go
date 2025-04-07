@@ -39,11 +39,15 @@ type Option func(*options)
 // for discriminating between the arms. That decision
 // is influenced by the MergeAtoms and MergeCompatibleStructs
 // options.
-func Discriminate(arms []cue.Value, optArgs ...Option) (DecisionNode, bool) {
+//
+// If [MergeCompatible] is specified, it also returns a slice
+// of distinct sets of arms that have been merged.
+func Discriminate(arms []cue.Value, optArgs ...Option) (DecisionNode, []IntSet, bool) {
 	var opts options
 	for _, f := range optArgs {
 		f(&opts)
 	}
+	var groups []IntSet
 	origArms := arms
 	var rev func(int) IntSet
 	if opts.mergeCompatible {
@@ -55,12 +59,16 @@ func Discriminate(arms []cue.Value, optArgs ...Option) (DecisionNode, bool) {
 			opts.logger.Printf("merge groups: {")
 			opts.logger.Indent()
 			for i := range newArms {
-				opts.logger.Printf("%v", setString(rev(i)))
+				opts.logger.Printf("%v", SetString(rev(i)))
 			}
 			opts.logger.Unindent()
 			opts.logger.Printf("}")
 		} else {
 			opts.logger.Printf("no merging")
+		}
+		groups = make([]IntSet, len(newArms))
+		for i := range groups {
+			groups[i] = rev(i)
 		}
 		arms = newArms
 	}
@@ -81,7 +89,7 @@ func Discriminate(arms []cue.Value, optArgs ...Option) (DecisionNode, bool) {
 		n = d.discriminate(arms, intSetN(len(arms)))
 	}
 
-	return n, isPerfect(n, opts.mergeCompatible, origArms)
+	return n, groups, isPerfect(n, opts.mergeCompatible, origArms)
 }
 
 type discriminator[Set any] struct {
@@ -375,7 +383,7 @@ func (d *discriminator[Set]) fullyDiscriminated(it iter.Seq[Set], selected Set) 
 }
 
 func (d *discriminator[Set]) setString(s Set) string {
-	return setString(d.asExternalSet(s))
+	return SetString(d.asExternalSet(s))
 }
 
 func (d *discriminator[Set]) newLeaf(s Set) DecisionNode {

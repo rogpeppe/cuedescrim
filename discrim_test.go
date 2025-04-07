@@ -335,7 +335,7 @@ func TestBuildDecisionTree(t *testing.T) {
 
 			arms := Disjunctions(val)
 			t.Logf("arms: %v", arms)
-			tree, isPerfect := Discriminate(arms, opts...)
+			tree, _, isPerfect := Discriminate(arms, opts...)
 			qt.Assert(t, qt.Equals(NodeString(tree), strings.TrimPrefix(test.want, "\n")))
 			qt.Check(t, qt.Equals(isPerfect, test.wantPerfect))
 

@@ -44,7 +44,7 @@ type LeafNode struct {
 }
 
 func (l *LeafNode) write(w *indentWriter) {
-	w.Printf("choose(%v)", setString(l.Arms))
+	w.Printf("choose(%v)", SetString(l.Arms))
 }
 
 func (l *LeafNode) Check(v cue.Value) IntSet {
@@ -128,7 +128,7 @@ func (n *FieldAbsenceNode) write(w *indentWriter) {
 	w.Indent()
 	for _, path := range slices.Sorted(maps.Keys(n.Branches)) {
 		group := n.Branches[path]
-		w.Printf("notPresent(%v) -> %s", path, setString(group))
+		w.Printf("notPresent(%v) -> %s", path, SetString(group))
 	}
 	w.Unindent()
 	w.Printf("}")

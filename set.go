@@ -83,7 +83,7 @@ func (i singleInt) Len() int {
 	return 1
 }
 
-func setString[T cmp.Ordered](s Set[T]) string {
+func SetString[T cmp.Ordered](s Set[T]) string {
 	var buf strings.Builder
 	buf.WriteString("{")
 	first := true

@@ -39,8 +39,13 @@ func valueSetForValue(v cue.Value) valueSet {
 	return s
 }
 
+var allKindsMask = func() cue.Kind {
+	return fold(slices.Values(allKinds), func(x, y cue.Kind) cue.Kind {
+		return x | y
+	})
+}()
+
 var allKinds = []cue.Kind{
-	cue.BottomKind, // Note: bottom is used to represent a missing field.
 	cue.NullKind,
 	cue.BoolKind,
 	cue.IntKind,

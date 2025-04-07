@@ -32,7 +32,8 @@ func allFields(values []cue.Value, selected Set[int], labelTypes labelType) iter
 				if !selected.Has(i) {
 					continue
 				}
-				for name, v := range structFields(v, labelTypes) {
+				for label, v := range structFields(v, labelTypes) {
+					name := label.name
 					var entry []cue.Value
 					if i, ok := byName[name]; ok {
 						entry = ordered[i]
@@ -46,7 +47,7 @@ func allFields(values []cue.Value, selected Set[int], labelTypes labelType) iter
 				}
 			}
 
-			// First produce produce any field that has a non-struct value.
+			// First produce any field that has a non-struct value.
 		outer:
 			for oi := range ordered {
 				name, values := orderedNames[oi], ordered[oi]
@@ -91,8 +92,8 @@ type pathValues struct {
 
 // structFields returns an iterator over the names of all the required fields
 // in v and their values.
-func structFields(v cue.Value, labelTypes labelType) iter.Seq2[string, cue.Value] {
-	return func(yield func(string, cue.Value) bool) {
+func structFields(v cue.Value, labelTypes labelType) iter.Seq2[label, cue.Value] {
+	return func(yield func(label, cue.Value) bool) {
 		if !v.Exists() {
 			return
 		}
@@ -102,12 +103,21 @@ func structFields(v cue.Value, labelTypes labelType) iter.Seq2[string, cue.Value
 		}
 		for iter.Next() {
 			if labelTypes.match(iter.FieldType()) {
-				if !yield(iter.Selector().Unquoted(), iter.Value()) {
+				lab := label{
+					name:      iter.Selector().Unquoted(),
+					labelType: labelTypeForSelectorType(iter.FieldType()),
+				}
+				if !yield(lab, iter.Value()) {
 					break
 				}
 			}
 		}
 	}
+}
+
+type label struct {
+	name      string
+	labelType labelType
 }
 
 type labelType int
@@ -119,19 +129,23 @@ const (
 )
 
 func (t labelType) match(selt cue.SelectorType) bool {
+	return (t & labelTypeForSelectorType(selt)) != 0
+}
+
+func labelTypeForSelectorType(selt cue.SelectorType) labelType {
 	if (selt & cue.StringLabel) == 0 {
-		return false
+		return 0
 	}
-	var actual labelType
 	switch selt & (cue.OptionalConstraint | cue.RequiredConstraint) {
 	case 0:
-		actual = regularLabel
+		return regularLabel
 	case cue.OptionalConstraint:
-		actual = optionalLabel
+		return optionalLabel
 	case cue.RequiredConstraint:
-		actual = requiredLabel
+		return requiredLabel
+	default:
+		panic("unreachable")
 	}
-	return (t & actual) != 0
 }
 
 type queue[T any] []T

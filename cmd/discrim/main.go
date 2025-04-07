@@ -9,6 +9,7 @@ import (
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/ast"
 	"cuelang.org/go/cue/cuecontext"
+	"cuelang.org/go/cue/format"
 	"cuelang.org/go/cue/load"
 	"cuelang.org/go/cue/parser"
 
@@ -21,6 +22,7 @@ var (
 	flagExpr            = flag.String("e", "", "expression to print info on")
 	flagContinue        = flag.Bool("continue-on-error", false, "continue on error")
 	flagMergeCompatible = flag.Bool("m", false, "merge compatible data types before attempting discrimination")
+	flagTypes           = flag.Bool("t", false, "when types have been merged, show the merged result")
 )
 
 func main() {
@@ -69,7 +71,10 @@ package specified.
 		if *flagVerbose {
 			printArms(arms)
 		}
-		d, isPerfect := cuediscrim.Discriminate(arms, opts...)
+		d, groups, isPerfect := cuediscrim.Discriminate(arms, opts...)
+		if *flagTypes {
+			printTypes(arms, groups)
+		}
 		if !isPerfect {
 			fmt.Printf("discriminator is imperfect\n")
 		}
@@ -89,6 +94,24 @@ package specified.
 	}
 }
 
+func printTypes(arms []cue.Value, groups []cuediscrim.IntSet) {
+	for _, g := range groups {
+		if g.Len() < 2 {
+			continue
+		}
+		var vs []cue.Value
+		for i := range g.Values() {
+			vs = append(vs, arms[i])
+		}
+		expr := cuediscrim.DataTypeForValues(vs)
+		data, err := format.Node(expr)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("merged %s into %s\n", cuediscrim.SetString(g), data)
+	}
+}
+
 type walker struct {
 	printed bool
 }
@@ -104,7 +127,7 @@ func (w *walker) walkFields(v cue.Value) {
 	for iter.Next() {
 		v := iter.Value()
 		if arms := cuediscrim.Disjunctions(v); len(arms) > 1 {
-			n, isPerfect := cuediscrim.Discriminate(arms, cuediscrim.MergeCompatible(*flagMergeCompatible))
+			n, groups, isPerfect := cuediscrim.Discriminate(arms, cuediscrim.MergeCompatible(*flagMergeCompatible))
 			if *flagAll || !isPerfect {
 				if w.printed {
 					fmt.Printf("\n")
@@ -116,10 +139,13 @@ func (w *walker) walkFields(v cue.Value) {
 					// Run again so that we get the debug info.
 					// TODO avoid duplicatin the work when *flagAll is specified
 					// so we know we're printing debug info in advance.
-					n, _ = cuediscrim.Discriminate(arms,
+					n, groups, _ = cuediscrim.Discriminate(arms,
 						cuediscrim.LogTo(os.Stdout),
 						cuediscrim.MergeCompatible(*flagMergeCompatible),
 					)
+				}
+				if *flagTypes {
+					printTypes(arms, groups)
 				}
 				fmt.Print(cuediscrim.NodeString(n))
 			}
