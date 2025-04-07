@@ -80,23 +80,27 @@ func dataTypeForStruct(arms []cue.Value) ast.Expr {
 }
 
 func dataTypeForList(arms []cue.Value) ast.Expr {
-	types, longest := listTypes(arms)
-	hasEllipsis := false
+	types, numIndexes := listTypes(arms)
+	shortestElems := numIndexes
 	for _, t := range types {
-		hasEllipsis = hasEllipsis || t.ellipsis.Exists()
+		shortestElems = min(shortestElems, len(t.elems))
+	}
+	var ellipsisValues []cue.Value
+	for _, t := range types {
+		for i := shortestElems; i < numIndexes; i++ {
+			ellipsisValues = append(ellipsisValues, t.index(i))
+		}
 	}
 	lit := &ast.ListLit{
-		Elts: make([]ast.Expr, longest+1),
+		Elts: make([]ast.Expr, 0, shortestElems+1),
 	}
-	for i := range longest + 1 {
-		elem := DataTypeForValues(listValuesAt(types, i))
-		if i < longest || !hasEllipsis {
-			lit.Elts[i] = elem
-		} else {
-			lit.Elts[i] = &ast.Ellipsis{
-				Type: elem,
-			}
-		}
+	for i := range shortestElems {
+		lit.Elts = append(lit.Elts, DataTypeForValues(listValuesAt(types, i)))
+	}
+	if len(ellipsisValues) > 0 {
+		lit.Elts = append(lit.Elts, &ast.Ellipsis{
+			Type: DataTypeForValues(ellipsisValues),
+		})
 	}
 	return lit
 }
@@ -325,8 +329,8 @@ func compatibleKinds(arms []cue.Value) bool {
 }
 
 // listTypes returns the types of all the given list values,
-// and also reports the maximum index that might differ
-// across lists.
+// and also reports the the number of potentially
+// distinct indexes.
 func listTypes(lists []cue.Value) ([]listType, int) {
 	types := make([]listType, len(lists))
 	longest := 0

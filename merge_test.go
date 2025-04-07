@@ -24,7 +24,15 @@ var dataTypeForValuesTests = []struct {
 }, {
 	name: "Lists",
 	cue:  `[int, ... string] | [int] | [int, "foo"]`,
-	want: `[int, string, ...string]`,
+	want: `[int, ...string]`,
+}, {
+	name: "ListsAllFixedLength",
+	cue:  `[int, string] | [int&>3, =~"foo"]`,
+	want: `[int, string]`,
+}, {
+	name: "ListsMultipleEllipses",
+	cue:  `[int, ... int] | [int, int, int] | [int, int, ...int]`,
+	want: `[int, ...int]`,
 }, {
 	name: "Structs",
 	cue:  `{a!: int, b!: string} | {a!: 5, c?: bool}`,

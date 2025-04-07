@@ -14,7 +14,13 @@ type options struct {
 }
 
 // LogTo causes debug information to be written to w.
+// If w is nil, no logging will be done.
 func LogTo(w io.Writer) Option {
+	if w == nil {
+		return func(opts *options) {
+			opts.logger = nil
+		}
+	}
 	return func(opts *options) {
 		opts.logger = &indentWriter{
 			w: w,

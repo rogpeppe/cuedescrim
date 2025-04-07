@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 
@@ -17,12 +18,13 @@ import (
 )
 
 var (
-	flagAll             = flag.Bool("a", false, "show information on all disjuncts, not just imperfect ones")
-	flagVerbose         = flag.Bool("v", false, "print more info")
-	flagExpr            = flag.String("e", "", "expression to print info on")
-	flagContinue        = flag.Bool("continue-on-error", false, "continue on error")
-	flagMergeCompatible = flag.Bool("m", false, "merge compatible data types before attempting discrimination")
-	flagTypes           = flag.Bool("t", false, "when types have been merged, show the merged result")
+	flagAll                   = flag.Bool("a", false, "show information on all disjuncts, not just imperfect ones")
+	flagVerbose               = flag.Bool("v", false, "print more info")
+	flagExpr                  = flag.String("e", "", "expression to print info on")
+	flagContinue              = flag.Bool("continue-on-error", false, "continue on error")
+	flagMergeCompatible       = flag.Bool("m", false, "merge compatible data types if a perfect discriminator cannot be found")
+	flagMergeCompatibleAlways = flag.Bool("M", false, "merge compatible types even when the discriminator is perfect")
+	flagTypes                 = flag.Bool("t", false, "when types have been merged, show the merged result")
 )
 
 func main() {
@@ -57,11 +59,9 @@ package specified.
 	}
 	if expr != nil {
 		scope := ctx.BuildInstance(insts[0]) // Ignore error.
-		opts := []cuediscrim.Option{
-			cuediscrim.MergeCompatible(*flagMergeCompatible),
-		}
+		var logTo io.Writer
 		if *flagVerbose {
-			opts = append(opts, cuediscrim.LogTo(os.Stderr))
+			logTo = os.Stdout
 		}
 		v := ctx.BuildExpr(expr, cue.Scope(scope), cue.InferBuiltins(true))
 		if err := v.Err(); err != nil {
@@ -71,9 +71,9 @@ package specified.
 		if *flagVerbose {
 			printArms(arms)
 		}
-		d, groups, isPerfect := cuediscrim.Discriminate(arms, opts...)
-		if *flagTypes {
-			printTypes(arms, groups)
+		d, groups, isPerfect := discriminate(arms, logTo)
+		if *flagTypes || *flagVerbose {
+			printMergedTypes(arms, groups)
 		}
 		if !isPerfect {
 			fmt.Printf("discriminator is imperfect\n")
@@ -94,7 +94,17 @@ package specified.
 	}
 }
 
-func printTypes(arms []cue.Value, groups []cuediscrim.IntSet) {
+func discriminate(arms []cue.Value, verboseWriter io.Writer) (cuediscrim.DecisionNode, []cuediscrim.IntSet, bool) {
+	merge := *flagMergeCompatibleAlways
+
+	n, groups, isPerfect := cuediscrim.Discriminate(arms, cuediscrim.LogTo(verboseWriter), cuediscrim.MergeCompatible(merge))
+	if isPerfect || !*flagMergeCompatible {
+		return n, groups, isPerfect
+	}
+	return cuediscrim.Discriminate(arms, cuediscrim.LogTo(verboseWriter), cuediscrim.MergeCompatible(true))
+}
+
+func printMergedTypes(arms []cue.Value, groups []cuediscrim.IntSet) {
 	for _, g := range groups {
 		if g.Len() < 2 {
 			continue
@@ -127,7 +137,7 @@ func (w *walker) walkFields(v cue.Value) {
 	for iter.Next() {
 		v := iter.Value()
 		if arms := cuediscrim.Disjunctions(v); len(arms) > 1 {
-			n, groups, isPerfect := cuediscrim.Discriminate(arms, cuediscrim.MergeCompatible(*flagMergeCompatible))
+			n, groups, isPerfect := discriminate(arms, nil)
 			if *flagAll || !isPerfect {
 				if w.printed {
 					fmt.Printf("\n")
@@ -137,15 +147,12 @@ func (w *walker) walkFields(v cue.Value) {
 				if *flagVerbose {
 					printArms(arms)
 					// Run again so that we get the debug info.
-					// TODO avoid duplicatin the work when *flagAll is specified
+					// TODO avoid duplicating the work when *flagAll is specified
 					// so we know we're printing debug info in advance.
-					n, groups, _ = cuediscrim.Discriminate(arms,
-						cuediscrim.LogTo(os.Stdout),
-						cuediscrim.MergeCompatible(*flagMergeCompatible),
-					)
+					n, groups, _ = discriminate(arms, os.Stdout)
 				}
-				if *flagTypes {
-					printTypes(arms, groups)
+				if *flagTypes || *flagVerbose {
+					printMergedTypes(arms, groups)
 				}
 				fmt.Print(cuediscrim.NodeString(n))
 			}
