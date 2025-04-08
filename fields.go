@@ -90,8 +90,8 @@ type pathValues struct {
 	values []cue.Value
 }
 
-// structFields returns an iterator over the names of all the required fields
-// in v and their values.
+// structFields returns an iterator over the names of all the fields in v
+// that match any of the given label types, and their values.
 func structFields(v cue.Value, labelTypes labelType) iter.Seq2[label, cue.Value] {
 	return func(yield func(label, cue.Value) bool) {
 		if !v.Exists() {
